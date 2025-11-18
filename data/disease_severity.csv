@@ -1,0 +1,21 @@
+Disease,Severity_Level,Severity_Name,Description
+Hernia,1,Nhẹ,Thoát vị cơ hoành - Ít nguy hiểm
+Pleural_Thickening,1,Nhẹ,Dày màng phổi - Mạn tính
+Atelectasis,2,Trung bình,Xẹp phổi - Cần điều trị
+Infiltration,2,Trung bình,Thâm nhiễm phổi - Nhiễm trùng nhẹ
+Emphysema,2,Trung bình,Khí phế thũng - COPD
+Fibrosis,2,Trung bình,Xơ phổi - Giảm chức năng phổi
+Cardiomegaly,2,Trung bình,Tim to - Suy tim mạn tính
+Nodule,2,Trung bình,Nốt phổi - Cần theo dõi
+Pneumonia,3,Nặng,Viêm phổi - Nhiễm trùng nghiêm trọng
+Consolidation,3,Nặng,Đông đặc phổi - Viêm nhiễm nặng
+Effusion,3,Nặng,Tràn dịch màng phổi - Cần dẫn lưu
+Edema,3,Nặng,Phù phổi - Suy tim cấp
+Pneumothorax,4,Rất nặng,Tràn khí màng phổi - Nguy cấp tính mạng
+Mass,4,Rất nặng,Khối u - Nghi ngờ ung thư
+Pneumoperitoneum,3,Nặng,Khí ổ bụng - Cần can thiệp
+Pneumomediastinum,3,Nặng,Khí trung thất - Cần theo dõi
+Subcutaneous Emphysema,2,Trung bình,Khí dưới da - Thường không nguy hiểm
+Tortuous Aorta,1,Nhẹ,Động mạch chủ ngoằn ngoèo
+Calcification of the Aorta,1,Nhẹ,Vôi hóa động mạch chủ
+No Finding,0,Bình thường,Không phát hiện bệnh lý
