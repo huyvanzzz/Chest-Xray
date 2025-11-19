@@ -69,34 +69,47 @@ def read_image(image_path):
 # Predict bệnh nặng nhất từ HDFS
 # ------------------------------
 def predict_chest_xray(image_path, severity_csv="data/disease_severity.csv"):
-    model = load_model_once()
-    severity_data = load_severity_once(severity_csv)
+    try:
+        model = load_model_once()
+        severity_data = load_severity_once(severity_csv)
 
-    # Load ảnh từ HDFS
-    img = read_image(image_path)
-    img = img.resize((224, 224))
-    img = np.array(img).astype(np.float32)
-    img = xrv.utils.normalize(img, 255, 0)
-    img = img[np.newaxis, :, :]
-    x = torch.from_numpy(img).unsqueeze(0)
+        # Load ảnh từ HDFS
+        img = read_image(image_path)
+        img = img.resize((224, 224))
+        img = np.array(img).astype(np.float32)
+        img = xrv.utils.normalize(img, 255, 0)
+        img = img[np.newaxis, :, :]
+        x = torch.from_numpy(img).unsqueeze(0)
 
-    # Predict
-    with torch.no_grad():
-        logits = model(x)
-        probs = torch.sigmoid(logits)[0]
+        # Predict
+        with torch.no_grad():
+            logits = model(x)
+            probs = torch.sigmoid(logits)[0]
 
-    # Chọn bệnh có probability cao nhất
-    max_idx = torch.argmax(probs).item()
-    disease_name = model.pathologies[max_idx]
-    prob = float(probs[max_idx])
-    sev_info = severity_data.get(disease_name, {'level':0,'name':'Không xác định','description':''})
+        # Chọn bệnh có probability cao nhất
+        max_idx = torch.argmax(probs).item()
+        disease_name = model.pathologies[max_idx]
+        prob = float(probs[max_idx])
+        sev_info = severity_data.get(disease_name, {'level':0,'name':'Không xác định','description':''})
 
-    result = {
-        'disease': disease_name,
-        'probability': prob,
-        'severity_level': sev_info['level'],
-        'severity_name': sev_info['name'],
-        'description': sev_info['description']
-    }
+        result = {
+            'disease': disease_name,
+            'probability': prob,
+            'severity_level': sev_info['level'],
+            'severity_name': sev_info['name'],
+            'description': sev_info['description']
+        }
 
-    return json.dumps(result, ensure_ascii=False)
+        return json.dumps(result, ensure_ascii=False)
+        
+    except Exception as e:
+        # File not found hoặc lỗi khác - trả về result với error
+        print(f"[ERROR] predict_chest_xray failed for {image_path}: {str(e)}")
+        error_result = {
+            'disease': 'No Finding',
+            'probability': 0.0,
+            'severity_level': 0,
+            'severity_name': 'Error',
+            'description': f'Cannot process image: {str(e)[:100]}'
+        }
+        return json.dumps(error_result, ensure_ascii=False)

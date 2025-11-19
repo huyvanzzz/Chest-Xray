@@ -9,19 +9,23 @@ services:
       - CLUSTER_NAME=genome_hadoop
       - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
       - HDFS_CONF_dfs_namenode_name_dir=file:///hadoop/dfs/name
+      - HDFS_CONF_dfs_safemode_threshold_pct=0.001
+      - HDFS_CONF_dfs_namenode_safemode_min_datanodes=1
     volumes:
       - hadoop_namenode:/hadoop/dfs/name
       - ./data:/data
+      - ./scripts:/scripts
     ports:
       - "9000:9000"
       - "9870:9870"
     networks:
       - genome_hadoop_net
     healthcheck:
-      test: ["CMD", "hdfs", "dfsadmin", "-safemode", "get"]
-      interval: 5s
-      retries: 10
+      test: ["CMD", "bash", "-c", "hdfs dfsadmin -safemode get | grep -q OFF"]
+      interval: 10s
+      retries: 20
       timeout: 10s
+      start_period: 30s
 
   datanode1:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
@@ -162,6 +166,20 @@ services:
     networks:
       - genome_hadoop_net
 
+  # ===== HDFS Safemode Disabler =====
+  hdfs-safemode-disabler:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: hdfs-safemode-disabler
+    entrypoint: ["/scripts/disable-safemode.sh"]
+    volumes:
+      - ./scripts:/scripts
+    networks:
+      - genome_hadoop_net
+    depends_on:
+      namenode:
+        condition: service_started
+    restart: "no"
+
   # ===== Metadata Sender + Spark Streaming =====
   spark_streaming:
     build:
@@ -178,11 +196,83 @@ services:
       kafka:
         condition: service_started
 
+  # ===== MongoDB =====
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=admin123
+      - MONGO_INITDB_DATABASE=xray
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - genome_hadoop_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===== FastAPI Backend =====
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: xray-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC=xray_metadata
+      - HDFS_URL=http://namenode:9870
+      - HDFS_BASE_PATH=/xray/images
+      - MONGO_URI=mongodb://admin:admin123@mongodb:27017/
+      - MONGO_DATABASE=xray
+      - MONGO_COLLECTION=predictions
+    volumes:
+      - ./backend:/app
+      - /tmp/xray_uploads:/tmp/xray_uploads
+    networks:
+      - genome_hadoop_net
+    depends_on:
+      - namenode
+      - kafka
+      - mongodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===== React Frontend =====
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: xray-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - genome_hadoop_net
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   hadoop_namenode:
   hadoop_datanode1:
   hadoop_datanode2:
   hadoop_datanode3:
+  mongodb_data:
+  mongodb_config:
 
 
 networks:

@@ -31,6 +31,7 @@ schema = StructType([
     StructField("Image Index", StringType()),
     StructField("Follow-up #", StringType()),
     StructField("Patient ID", StringType()),
+    StructField("Patient Name", StringType()),
     StructField("Patient Age", IntegerType()),
     StructField("Patient Sex", StringType()),
     StructField("hdfs_path", StringType())
@@ -41,6 +42,8 @@ df_raw = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_BROKER) \
     .option("subscribe", TOPIC) \
+    .option("failOnDataLoss", "false") \
+    .option("startingOffsets", "earliest") \
     .load()
 
 # ---------- Parse JSON ----------
@@ -58,7 +61,7 @@ df_with_pred = df_parsed.withColumn(
 )
 
 # ---------- Ghi sang MongoDB ----------
-MONGO_URI = "mongodb+srv://Bigdata:huy332005%40gmail.com@clusterxray.ahgkigy.mongodb.net/?appName=ClusterXray"
+MONGO_URI = "mongodb://admin:admin123@mongodb:27017/"
 checkpoint_path_mongo = "hdfs://namenode:8020/xray/predictions/checkpoints_mongo/"
 
 def write_to_mongo(batch_df, batch_id):

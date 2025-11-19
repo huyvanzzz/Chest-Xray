@@ -28,5 +28,7 @@ COPY spark_streaming.py ./
 COPY send_test_metadata.py ./
 COPY ai/ ./ai/
 
-# 6. CMD chạy 2 script song song
-CMD ["bash", "-c", "python send_test_metadata.py & spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 spark_streaming.py"]
+# 6. CMD chỉ chạy Spark Streaming
+# Note: send_test_metadata.py có thể chạy thủ công khi cần test data
+CMD ["spark-submit", "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0", "spark_streaming.py"]
+#CMD ["bash", "-c", "python send_test_metadata.py & spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 spark_streaming.py"]
