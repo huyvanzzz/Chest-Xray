@@ -75,6 +75,26 @@ services:
     networks:
       - genome_hadoop_net
 
+    # ===== MongoDB =====
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=admin123
+      - MONGO_INITDB_DATABASE=xray
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - genome_hadoop_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ===== Spark =====
   spark-master:
@@ -135,37 +155,6 @@ services:
       retries: 5
       timeout: 5s
 
-  # ===== Hive Metastore =====
-  hive-metastore:
-    image: bde2020/hive-metastore-postgresql:latest
-    container_name: hive-metastore
-    environment:
-      - POSTGRES_USER=hive
-      - POSTGRES_PASSWORD=hive
-      - POSTGRES_DB=metastore
-    ports:
-      - "9083:9083"
-    networks:
-      - genome_hadoop_net
-    depends_on:
-      - namenode
-
-  # ===== HiveServer2 =====
-  hive-server:
-    image: bde2020/hive:latest
-    container_name: hive-server
-    environment:
-      - HIVE_METASTORE_URI=thrift://hive-metastore:9083
-      - HIVE_CONF_hive_exec_scratchdir=/tmp/hive
-      - HIVE_CONF_hive_metastore_uris=thrift://hive-metastore:9083
-    ports:
-      - "10000:10000"
-    depends_on:
-      - hive-metastore
-      - namenode
-    networks:
-      - genome_hadoop_net
-
   # ===== HDFS Safemode Disabler =====
   hdfs-safemode-disabler:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
@@ -196,26 +185,7 @@ services:
       kafka:
         condition: service_started
 
-  # ===== MongoDB =====
-  mongodb:
-    image: mongo:7.0
-    container_name: mongodb
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=admin
-      - MONGO_INITDB_ROOT_PASSWORD=admin123
-      - MONGO_INITDB_DATABASE=xray
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodb_data:/data/db
-      - mongodb_config:/data/configdb
-    networks:
-      - genome_hadoop_net
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+
 
   # ===== FastAPI Backend =====
   backend:

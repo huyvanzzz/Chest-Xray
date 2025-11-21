@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, TrendingDown, TrendingUp, AlertCircle, Activity, Filter } from 'lucide-react';
+import { TrendingDown, TrendingUp, AlertCircle, Activity, Filter } from 'lucide-react';
 
 interface Prediction {
   _id: string;
@@ -11,7 +11,11 @@ interface Prediction {
   _parsed_severity: number;
   _parsed_disease: string;
   _parsed_probability: number;
+  _priority_score?: number;
+  _hours_waiting?: number;
   timestamp?: string;
+  examined?: boolean;
+  examined_at?: string;
 }
 
 interface SeveritySummary {
@@ -38,6 +42,7 @@ const PriorityPage: React.FC = () => {
   const [endDate, setEndDate] = useState('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [selectedSeverity, setSelectedSeverity] = useState<number | null>(null);
+  const [filteredPredictions, setFilteredPredictions] = useState<Prediction[]>([]);
 
   const severityColors = {
     0: { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
@@ -54,10 +59,18 @@ const PriorityPage: React.FC = () => {
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
       params.append('sort_order', sortOrder);
+      params.append('limit', '100');
 
       const response = await fetch(`/api/priority/statistics?${params}`);
       const data = await response.json();
       setStatistics(data);
+      
+      // Nếu đang có filter severity, load lại data cho severity đó
+      if (selectedSeverity !== null) {
+        await fetchBySeverity(selectedSeverity);
+      } else {
+        setFilteredPredictions(data.predictions);
+      }
     } catch (error) {
       console.error('Error fetching statistics:', error);
     } finally {
@@ -65,9 +78,35 @@ const PriorityPage: React.FC = () => {
     }
   };
 
+  const fetchBySeverity = async (severityLevel: number) => {
+    try {
+      const response = await fetch(`/api/priority/by-severity?severity_level=${severityLevel}&limit=200`);
+      const data = await response.json();
+      setFilteredPredictions(data.results || []);
+    } catch (error) {
+      console.error('Error fetching by severity:', error);
+      setFilteredPredictions([]);
+    }
+  };
+
+  const handleSeverityClick = async (severityLevel: number) => {
+    if (selectedSeverity === severityLevel) {
+      // Nếu đang chọn rồi thì bỏ chọn
+      setSelectedSeverity(null);
+      setFilteredPredictions(statistics?.predictions || []);
+    } else {
+      // Chọn severity mới
+      setSelectedSeverity(severityLevel);
+      setLoading(true);
+      await fetchBySeverity(severityLevel);
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchStatistics();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate, sortOrder]);
 
   const handleFilter = () => {
     fetchStatistics();
@@ -89,9 +128,41 @@ const PriorityPage: React.FC = () => {
     return (prob * 100).toFixed(1) + '%';
   };
 
-  const filteredPredictions = selectedSeverity !== null
-    ? statistics?.predictions.filter(p => p._parsed_severity === selectedSeverity) || []
-    : statistics?.predictions || [];
+  const handleExaminedChange = async (predictionId: string, examined: boolean) => {
+    try {
+      const response = await fetch('/api/priority/mark-examined', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prediction_id: predictionId,
+          examined: examined,
+        }),
+      });
+
+      if (response.ok) {
+        // Cập nhật state local
+        setFilteredPredictions(prev =>
+          prev.map(p =>
+            p._id === predictionId
+              ? { ...p, examined: examined, examined_at: examined ? new Date().toISOString() : undefined }
+              : p
+          )
+        );
+      } else {
+        console.error('Failed to update examined status');
+        // Revert checkbox nếu API fail
+        const checkbox = document.getElementById(`examined-${predictionId}`) as HTMLInputElement;
+        if (checkbox) checkbox.checked = !examined;
+      }
+    } catch (error) {
+      console.error('Error updating examined status:', error);
+      // Revert checkbox
+      const checkbox = document.getElementById(`examined-${predictionId}`) as HTMLInputElement;
+      if (checkbox) checkbox.checked = !examined;
+    }
+  };
 
   if (loading) {
     return (
@@ -180,9 +251,7 @@ const PriorityPage: React.FC = () => {
         {statistics?.summary.map((item) => (
           <div
             key={item.severity_level}
-            onClick={() => setSelectedSeverity(
-              selectedSeverity === item.severity_level ? null : item.severity_level
-            )}
+            onClick={() => handleSeverityClick(item.severity_level)}
             className={`
               ${severityColors[item.severity_level as keyof typeof severityColors].bg}
               ${severityColors[item.severity_level as keyof typeof severityColors].border}
@@ -253,6 +322,12 @@ const PriorityPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   STT
                 </th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Đã khám
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Điểm ưu tiên
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Bệnh nhân
                 </th>
@@ -266,22 +341,42 @@ const PriorityPage: React.FC = () => {
                   Mức độ
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Thời gian
+                  Thời gian chờ
                 </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredPredictions.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
                     Không có dữ liệu
                   </td>
                 </tr>
               ) : (
                 filteredPredictions.map((prediction, index) => (
-                  <tr key={prediction._id} className="hover:bg-gray-50">
+                  <tr 
+                    key={prediction._id} 
+                    className={`hover:bg-gray-50 ${prediction.examined ? 'bg-green-50 opacity-60' : ''}`}
+                  >
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {index + 1}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <input
+                        id={`examined-${prediction._id}`}
+                        type="checkbox"
+                        checked={prediction.examined || false}
+                        onChange={(e) => handleExaminedChange(prediction._id, e.target.checked)}
+                        className="w-5 h-5 text-green-600 border-gray-300 rounded focus:ring-green-500 cursor-pointer"
+                      />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-lg font-bold text-blue-600">
+                        {prediction._priority_score?.toFixed(1) || '0.0'}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        điểm
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
@@ -313,8 +408,13 @@ const PriorityPage: React.FC = () => {
                         {statistics?.summary.find(s => s.severity_level === prediction._parsed_severity)?.severity_name}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatDate(prediction.timestamp)}
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {prediction._hours_waiting ? `${prediction._hours_waiting.toFixed(1)} giờ` : 'N/A'}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {formatDate(prediction.timestamp)}
+                      </div>
                     </td>
                   </tr>
                 ))

@@ -14,9 +14,8 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
           <div className="flex justify-between items-center py-4">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">
-                🏥 Hệ thống Phân tích X-Ray Phổi
+                Hệ thống Phân tích X-Ray Phổi
               </h1>
-              <p className="text-sm text-gray-600">AI-powered chest X-ray analysis</p>
             </div>
           </div>
 

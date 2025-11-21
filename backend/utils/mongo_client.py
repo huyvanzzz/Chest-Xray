@@ -506,8 +506,8 @@ class MongoDBClient:
             # Parse severity level từ predicted_label
             severity_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
             severity_names = {
-                0: "Error",
-                1: "Bình thường", 
+                0: "Bình thường",  # No Finding
+                1: "Nhẹ", 
                 2: "Trung bình",
                 3: "Nặng",
                 4: "Rất nặng"
@@ -531,25 +531,72 @@ class MongoDBClient:
                 if 'predicted_label' in doc and doc['predicted_label']:
                     try:
                         import json
-                        pred_data = json.loads(doc['predicted_label'])
+                        pred_label = doc['predicted_label']
+                        
+                        # Handle both string and already parsed data
+                        if isinstance(pred_label, str):
+                            pred_data = json.loads(pred_label)
+                        else:
+                            pred_data = pred_label
+                        
+                        # If it's a list, get the first prediction (most severe/important)
+                        if isinstance(pred_data, list):
+                            if len(pred_data) > 0:
+                                pred_data = pred_data[0]
+                            else:
+                                pred_data = {"severity_level": 0, "disease": "No Finding", "probability": 0}
+                        
                         severity_level = pred_data.get('severity_level', 0)
                         doc['_parsed_severity'] = severity_level
                         doc['_parsed_disease'] = pred_data.get('disease', 'Unknown')
                         doc['_parsed_probability'] = pred_data.get('probability', 0)
-                    except:
+                    except Exception as e:
+                        logger.warning(f"Cannot parse predicted_label: {e}")
                         severity_level = 0
                         doc['_parsed_severity'] = 0
+                        doc['_parsed_disease'] = 'Error'
+                        doc['_parsed_probability'] = 0
                 
                 severity_counts[severity_level] += 1
                 all_predictions.append(doc)
             
-            # Sort predictions by severity level
+            # Calculate priority score for each prediction
+            # Priority Score = (severity_level * 10) + (hours_waiting * 0.5)
+            from datetime import datetime, timezone
+            
+            now = datetime.now(timezone.utc)
+            for pred in all_predictions:
+                severity = pred.get('_parsed_severity', 0)
+                
+                # Calculate hours waiting from timestamp
+                hours_waiting = 0
+                if pred.get('timestamp'):
+                    try:
+                        pred_time = datetime.fromisoformat(pred['timestamp'].replace('Z', '+00:00'))
+                        time_diff = now - pred_time
+                        hours_waiting = time_diff.total_seconds() / 3600
+                    except Exception as e:
+                        logger.warning(f"Cannot parse timestamp: {e}")
+                        hours_waiting = 0
+                
+                # Priority formula: severity contributes more but waiting time adds up
+                priority_score = (severity * 10) + (hours_waiting * 0.5)
+                pred['_priority_score'] = round(priority_score, 2)
+                pred['_hours_waiting'] = round(hours_waiting, 1)
+            
+            # Sort by priority score (highest first), nhưng đưa examined xuống cuối
             reverse = (sort_order == "desc")
-            sorted_predictions = sorted(
-                all_predictions,
-                key=lambda x: x.get('_parsed_severity', 0),
-                reverse=reverse
-            )
+            
+            # Separate examined and not examined predictions
+            not_examined = [p for p in all_predictions if not p.get('examined', False)]
+            examined = [p for p in all_predictions if p.get('examined', False)]
+            
+            # Sort each group
+            not_examined_sorted = sorted(not_examined, key=lambda x: x.get('_priority_score', 0), reverse=reverse)
+            examined_sorted = sorted(examined, key=lambda x: x.get('_priority_score', 0), reverse=reverse)
+            
+            # Combine: not examined first, then examined
+            sorted_predictions = not_examined_sorted + examined_sorted
             
             # Limit predictions returned (chỉ trả về limit predictions đầu tiên)
             limited_predictions = sorted_predictions[:limit]
@@ -587,6 +634,93 @@ class MongoDBClient:
                 "error": str(e)
             }
     
+    def get_overall_statistics(self) -> Dict:
+        """
+        Lấy thống kê tổng quan cho Dashboard
+        
+        Returns:
+            Dict chứa:
+            - total_predictions: Tổng số dự đoán
+            - by_severity: Phân bố theo mức độ nghiêm trọng
+            - by_disease: Phân bố theo loại bệnh
+            - recent_count: Số dự đoán gần đây (24h)
+        """
+        try:
+            if self.collection is None:
+                self.connect()
+            
+            # Get all predictions
+            cursor = self.collection.find()
+            
+            severity_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+            disease_counts = {}
+            total_count = 0
+            recent_count = 0
+            
+            # Calculate 24h ago
+            from datetime import datetime, timedelta
+            from bson import ObjectId
+            one_day_ago = datetime.utcnow() - timedelta(days=1)
+            recent_oid = ObjectId.from_datetime(one_day_ago)
+            
+            for doc in cursor:
+                total_count += 1
+                
+                # Count recent (last 24h)
+                if isinstance(doc['_id'], ObjectId) and doc['_id'] > recent_oid:
+                    recent_count += 1
+                
+                # Parse predicted_label
+                if 'predicted_label' in doc and doc['predicted_label']:
+                    try:
+                        import json
+                        # Handle both string and list of predictions
+                        pred_label = doc['predicted_label']
+                        if isinstance(pred_label, str):
+                            pred_data = json.loads(pred_label)
+                        else:
+                            pred_data = pred_label
+                        
+                        # If it's a list, get the first/most severe prediction
+                        if isinstance(pred_data, list):
+                            if len(pred_data) > 0:
+                                pred_data = pred_data[0]  # Take first (most severe)
+                            else:
+                                continue
+                        
+                        severity_level = pred_data.get('severity_level', 0)
+                        disease = pred_data.get('disease', 'Unknown')
+                        
+                        # Count by severity
+                        if severity_level in severity_counts:
+                            severity_counts[severity_level] += 1
+                        
+                        # Count by disease
+                        if disease:
+                            disease_counts[disease] = disease_counts.get(disease, 0) + 1
+                    except Exception as e:
+                        logger.warning(f"Cannot parse predicted_label: {e}")
+                        pass
+            
+            result = {
+                "total_predictions": total_count,
+                "by_severity": severity_counts,
+                "by_disease": disease_counts,
+                "recent_count": recent_count
+            }
+            
+            logger.info(f"Overall statistics: {total_count} total, {recent_count} recent")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting overall statistics: {e}")
+            return {
+                "total_predictions": 0,
+                "by_severity": {0: 0, 1: 0, 2: 0, 3: 0, 4: 0},
+                "by_disease": {},
+                "recent_count": 0
+            }
+    
     def get_predictions_by_severity(self, severity_level: int, limit: int = 50, skip: int = 0) -> Dict:
         """
         Lấy predictions theo mức độ nghiêm trọng cụ thể
@@ -615,7 +749,20 @@ class MongoDBClient:
                 if 'predicted_label' in doc and doc['predicted_label']:
                     try:
                         import json
-                        pred_data = json.loads(doc['predicted_label'])
+                        pred_label = doc['predicted_label']
+                        
+                        if isinstance(pred_label, str):
+                            pred_data = json.loads(pred_label)
+                        else:
+                            pred_data = pred_label
+                        
+                        # If it's a list, get the first prediction
+                        if isinstance(pred_data, list):
+                            if len(pred_data) > 0:
+                                pred_data = pred_data[0]
+                            else:
+                                continue
+                        
                         if pred_data.get('severity_level') == severity_level:
                             doc['_parsed_severity'] = severity_level
                             doc['_parsed_disease'] = pred_data.get('disease', 'Unknown')
@@ -642,6 +789,51 @@ class MongoDBClient:
                 "results": [],
                 "error": str(e)
             }
+    
+    def update_prediction_examined_status(self, prediction_id: str, examined: bool) -> bool:
+        """
+        Cập nhật trạng thái đã khám của prediction
+        
+        Args:
+            prediction_id: ID của prediction
+            examined: True = đã khám, False = chưa khám
+            
+        Returns:
+            True nếu cập nhật thành công, False nếu thất bại
+        """
+        try:
+            if self.collection is None:
+                self.connect()
+            
+            from bson import ObjectId
+            from datetime import datetime, timezone
+            
+            # Convert string ID to ObjectId
+            try:
+                obj_id = ObjectId(prediction_id)
+            except:
+                logger.error(f"Invalid ObjectId: {prediction_id}")
+                return False
+            
+            # Update document
+            result = self.collection.update_one(
+                {"_id": obj_id},
+                {"$set": {
+                    "examined": examined,
+                    "examined_at": datetime.now(timezone.utc).isoformat() if examined else None
+                }}
+            )
+            
+            if result.modified_count > 0:
+                logger.info(f"Updated examined status for {prediction_id}: {examined}")
+                return True
+            else:
+                logger.warning(f"No document found with ID {prediction_id}")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Lỗi update examined status: {e}")
+            return False
     
     def close(self):
         """Đóng connection"""

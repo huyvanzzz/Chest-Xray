@@ -24,7 +24,7 @@ logging.basicConfig(
 # Add backend directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from routers import upload, predictions, patients, priority
+from routers import upload, predictions, patients, priority, websocket
 from utils.config import settings
 from utils.kafka_producer import kafka_producer
 from utils.mongo_client import mongo_client
@@ -51,6 +51,18 @@ app.include_router(upload.router, prefix="/api", tags=["Upload"])
 app.include_router(predictions.router, prefix="/api", tags=["Predictions"])
 app.include_router(patients.router, prefix="/api", tags=["Patients"])
 app.include_router(priority.router, prefix="/api", tags=["Priority"])
+app.include_router(websocket.router, prefix="/api", tags=["WebSocket"])
+
+# Stats endpoint for Dashboard
+@app.get("/api/stats")
+async def get_stats():
+    """Lấy thống kê tổng quan cho Dashboard"""
+    try:
+        stats = mongo_client.get_overall_statistics()
+        return stats
+    except Exception as e:
+        logging.error(f"Error getting stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Health check endpoint
 @app.get("/")

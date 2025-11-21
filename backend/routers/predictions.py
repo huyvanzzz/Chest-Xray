@@ -235,16 +235,21 @@ async def get_statistics():
         for pred in all_predictions:
             try:
                 import json
-                label_data = json.loads(pred.get('predicted_label', '{}'))
-                severity = label_data.get('severity_level', 0)
-                disease = label_data.get('disease', 'Unknown')
-                
-                # Count by severity
-                by_severity[severity] = by_severity.get(severity, 0) + 1
-                
-                # Count by disease
-                by_disease[disease] = by_disease.get(disease, 0) + 1
-            except:
+                label_str = pred.get('predicted_label', '[]')
+                # predicted_label is an array of predictions, get the first one
+                label_list = json.loads(label_str)
+                if label_list and len(label_list) > 0:
+                    label_data = label_list[0]
+                    severity = label_data.get('severity_level', 0)
+                    disease = label_data.get('disease', 'Unknown')
+                    
+                    # Count by severity
+                    by_severity[severity] = by_severity.get(severity, 0) + 1
+                    
+                    # Count by disease
+                    by_disease[disease] = by_disease.get(disease, 0) + 1
+            except Exception as e:
+                logger.warning(f"Failed to parse prediction: {e}")
                 continue
         
         high_risk = sum(count for level, count in by_severity.items() if level >= 3)
