@@ -1,6 +1,4 @@
-import React, { useState } from 'react';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+import React, { useEffect, useState } from 'react';
 
 interface UploadResponse {
   status: string;
@@ -18,7 +16,10 @@ export const UploadPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
+   useEffect(()=> {
+        document.title = "Upload - X-Ray System";
+      }, []);
+  
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
@@ -97,7 +98,6 @@ export const UploadPage: React.FC = () => {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold text-gray-900 mb-2">Upload ảnh X-Ray</h1>
-      <p className="text-gray-600 mb-8">Tải lên ảnh X-Ray phổi để nhận dự đoán bệnh tự động</p>
 
       {/* Success Message */}
       {successMessage && (
@@ -220,9 +220,8 @@ export const UploadPage: React.FC = () => {
             <div className="text-sm text-blue-800">
               <p className="font-semibold mb-1">Lưu ý:</p>
               <ul className="list-disc list-inside space-y-1">
-                <li>Ảnh sẽ được lưu trữ trên HDFS và xử lý bởi Spark Streaming</li>
                 <li>Thời gian xử lý trung bình: 10-30 giây</li>
-                <li>Kết quả sẽ được lưu vào MongoDB và có thể xem trong mục "Xem kết quả"</li>
+                <li>Kết quả sẽ được lưu và có thể xem trong mục "Xem kết quả"</li>
               </ul>
             </div>
           </div>

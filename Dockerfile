@@ -26,9 +26,12 @@ RUN pip install --no-cache-dir \
 WORKDIR /app
 COPY spark_streaming.py ./ 
 COPY send_test_metadata.py ./
+COPY init_kafka_topics.py ./
 COPY ai/ ./ai/
+COPY data/ ./data/
 
-# 6. CMD chỉ chạy Spark Streaming
-# Note: send_test_metadata.py có thể chạy thủ công khi cần test data
-CMD ["spark-submit", "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0", "spark_streaming.py"]
-#CMD ["bash", "-c", "python send_test_metadata.py & spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 spark_streaming.py"]
+# 5. Pre-download model to avoid issues in distributed Spark
+RUN python -c "import torchxrayvision as xrv; print('Downloading model...'); model = xrv.models.DenseNet(weights='densenet121-res224-nih'); print('Model downloaded!')"
+
+# 6. CMD: Initialize Kafka topics -> Run test data sender -> Run Spark Streaming
+CMD ["bash", "-c", "python init_kafka_topics.py && python send_test_metadata.py > /tmp/test_data.log 2>&1 & sleep 10 && spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 spark_streaming.py"]

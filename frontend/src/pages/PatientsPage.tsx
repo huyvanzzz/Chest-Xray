@@ -1,6 +1,4 @@
-import React, { useState, useEffect } from 'react';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+import React, { useState, useEffect, useEffectEvent } from 'react';
 
 interface Patient {
   _id: string;
@@ -73,6 +71,10 @@ export const PatientsPage: React.FC = () => {
     fetchPatients();
   }, [searchTerm]);
 
+  useEffect(()=> {
+    document.title = "Patients Management - X-Ray System";
+  }, []);
+
   useEffect(() => {
     if (showAddModal) {
       // Tự động sinh ID mới khi mở modal
@@ -87,8 +89,8 @@ export const PatientsPage: React.FC = () => {
     try {
       setLoading(true);
       const url = searchTerm 
-        ? `${API_BASE_URL}/patients?search=${encodeURIComponent(searchTerm)}&limit=100`
-        : `${API_BASE_URL}/patients?limit=100`;
+        ? `/api/patients?search=${encodeURIComponent(searchTerm)}&limit=100`
+        : `/api/patients?limit=100`;
       
       const response = await fetch(url);
       if (!response.ok) throw new Error('Không thể tải danh sách bệnh nhân');
@@ -112,7 +114,7 @@ export const PatientsPage: React.FC = () => {
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/patients`, {
+      const response = await fetch('/api/patients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPatient)
@@ -146,7 +148,7 @@ export const PatientsPage: React.FC = () => {
     setLoadingProfile(true);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/patients/${patient.patient_id}`);
+      const response = await fetch(`/api/patients/${patient.patient_id}`);
       if (!response.ok) throw new Error('Không thể tải profile');
       
       const data = await response.json();
@@ -162,7 +164,7 @@ export const PatientsPage: React.FC = () => {
     if (!selectedPatient) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/patients/${selectedPatient.patient_id}`, {
+      const response = await fetch(`/api/patients/${selectedPatient.patient_id}`, {
         method: 'DELETE'
       });
 
@@ -180,10 +182,12 @@ export const PatientsPage: React.FC = () => {
   const parsePrediction = (labelJson: string) => {
     try {
       const data = JSON.parse(labelJson);
+      // predicted_label is an array, get the first prediction
+      const prediction = Array.isArray(data) ? data[0] : data;
       return {
-        disease: data.disease || 'N/A',
-        severity: data.severity_level || 0,
-        probability: data.probability || 0
+        disease: prediction?.disease || 'N/A',
+        severity: prediction?.severity_level || 0,
+        probability: prediction?.probability || 0
       };
     } catch {
       return { disease: 'N/A', severity: 0, probability: 0 };

@@ -1,7 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 interface Stats {
   total_predictions: number;
@@ -16,22 +14,85 @@ const SEVERITY_NAMES = ['Bình thường', 'Nhẹ', 'Trung bình', 'Nghiêm tr�
 export const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [wsConnected, setWsConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    fetchStats();
+    connectWebSocket();
+
+    document.title = "Dashboard - X-Ray System";
+    
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
   }, []);
+
+  const connectWebSocket = () => {
+    try {
+      // Get WebSocket URL - use localhost:8000 for local dev, otherwise use current host
+      const isDevelopment = process.env.NODE_ENV === 'development' && window.location.port === '3000';
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsHost = isDevelopment ? 'localhost:8000' : window.location.host;
+      const wsUrl = `${wsProtocol}//${wsHost}/api/ws/stats`;
+      
+      console.log('Connecting to WebSocket:', wsUrl);
+      const ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => {
+        console.log('WebSocket connected');
+        setWsConnected(true);
+        setLoading(false);
+      };
+      
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'stats_update' && message.data) {
+            setStats(message.data);
+          }
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+        }
+      };
+      
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setWsConnected(false);
+      };
+      
+      ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        setWsConnected(false);
+        
+        // Auto reconnect after 5 seconds
+        reconnectTimeoutRef.current = setTimeout(() => {
+          console.log('Attempting to reconnect...');
+          connectWebSocket();
+        }, 5000);
+      };
+      
+      wsRef.current = ws;
+    } catch (error) {
+      console.error('Error connecting WebSocket:', error);
+      setLoading(false);
+    }
+  };
 
   const fetchStats = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/stats`);
+      const response = await fetch('/api/stats');
       if (response.ok) {
         const data = await response.json();
         setStats(data);
       }
     } catch (error) {
       console.error('Error fetching stats:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -175,17 +236,25 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Refresh Button */}
+      {/* Connection Status & Refresh Button */}
       <div className="mt-8 text-center">
-        <button
-          onClick={fetchStats}
-          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center"
-        >
-          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Làm mới dữ liệu
-        </button>
+        <div className="mb-4 inline-flex items-center">
+          <span className={`h-3 w-3 rounded-full mr-2 ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
+          <span className="text-sm text-gray-600">
+            {wsConnected ? 'Đang cập nhật tự động' : 'Mất kết nối - Đang thử kết nối lại...'}
+          </span>
+        </div>
+        <div>
+          <button
+            onClick={fetchStats}
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center"
+          >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Làm mới dữ liệu thủ công
+          </button>
+        </div>
       </div>
     </div>
   );

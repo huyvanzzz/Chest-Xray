@@ -1,0 +1,1 @@
+Priority Score = (severity_level × 10) + (hours_waiting × 0.5)

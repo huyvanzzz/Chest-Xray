@@ -4,12 +4,17 @@ Router cho trang ưu tiên - thống kê theo mức độ nghiêm trọng
 import logging
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status, Body
+from pydantic import BaseModel
 
 from utils.mongo_client import mongo_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+class UpdateExaminedRequest(BaseModel):
+    prediction_id: str
+    examined: bool
 
 @router.get(
     "/priority/statistics",
@@ -120,4 +125,46 @@ async def get_by_severity_level(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Không thể truy vấn: {str(e)}"
+        )
+
+@router.post(
+    "/priority/mark-examined",
+    responses={200: {"model": dict}, 400: {"model": dict}, 500: {"model": dict}}
+)
+async def mark_prediction_examined(request: UpdateExaminedRequest = Body(...)):
+    """
+    Đánh dấu prediction đã khám hoặc chưa khám
+    
+    ## Parameters
+    - **prediction_id**: ID của prediction
+    - **examined**: True = đã khám, False = chưa khám
+    
+    ## Returns
+    - **success**: True/False
+    - **message**: Thông báo kết quả
+    """
+    try:
+        result = mongo_client.update_prediction_examined_status(
+            prediction_id=request.prediction_id,
+            examined=request.examined
+        )
+        
+        if result:
+            return {
+                "success": True,
+                "message": f"Đã cập nhật trạng thái {'đã khám' if request.examined else 'chưa khám'}"
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Không tìm thấy prediction hoặc không thể cập nhật"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Lỗi mark examined: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Không thể cập nhật: {str(e)}"
         )

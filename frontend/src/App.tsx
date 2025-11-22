@@ -6,6 +6,7 @@ import { UploadPage } from './pages/UploadPage';
 import { ResultsPage } from './pages/ResultsPage';
 import { PatientsPage } from './pages/PatientsPage';
 import PriorityPage from './pages/PriorityPage';
+import { LogsPage } from './pages/LogsPage';
 import './App.css';
 
 function App() {
@@ -18,6 +19,7 @@ function App() {
           <Route path="/results" element={<ResultsPage />} />
           <Route path="/patients" element={<PatientsPage />} />
           <Route path="/priority" element={<PriorityPage />} />
+          <Route path="/logs" element={<LogsPage />} />
         </Routes>
       </Layout>
     </Router>

@@ -39,7 +39,7 @@ else:
 LOCAL_IMAGES_DIR = "/app/data/images"
 PATIENT_CSV = "/app/data/patient_subset.csv"
 BATCH_SIZE = 5
-INTERVAL_SEC = 10
+INTERVAL_SEC = 5
 
 # ---------- Load CSV ----------
 print("[DEBUG] Đang load CSV...")
@@ -68,18 +68,29 @@ for start_idx in range(0, num_images, BATCH_SIZE):
     else:
         print(f"[DEBUG] Folder batch HDFS đã tồn tại: {hdfs_batch_dir}")
 
-    # Upload ảnh vào HDFS
+    # Upload ảnh vào HDFS và track những ảnh upload thành công
+    uploaded_images = []
     for img_name in batch_images:
         local_path = os.path.join(LOCAL_IMAGES_DIR, img_name)
         if not os.path.exists(local_path):
             print(f"[WARN] Ảnh {local_path} không tồn tại, bỏ qua")
             continue
-        hdfs_path = f"{hdfs_batch_dir}/{img_name}"
-        hdfs_client.upload(hdfs_path, local_path, overwrite=True)
-        print(f"[DEBUG] Upload {local_path} -> {hdfs_path}")
+        try:
+            hdfs_path = f"{hdfs_batch_dir}/{img_name}"
+            hdfs_client.upload(hdfs_path, local_path, overwrite=True)
+            uploaded_images.append(img_name)
+            print(f"[DEBUG] Upload {local_path} -> {hdfs_path}")
+        except Exception as e:
+            print(f"[ERROR] Upload failed for {img_name}: {e}")
 
-    # Lấy metadata từ patient_csv
-    batch_meta = patient_csv[patient_csv['id'].isin(batch_images)].copy()
+    # Chỉ gửi metadata của những ảnh đã upload thành công
+    if not uploaded_images:
+        print(f"[WARN] Batch {batch_num:03d}: Không có ảnh nào được upload, bỏ qua batch")
+        batch_num += 1
+        continue
+
+    # Lấy metadata từ patient_csv - chỉ những ảnh đã upload
+    batch_meta = patient_csv[patient_csv['id'].isin(uploaded_images)].copy()
 
     HDFS_PREFIX = "hdfs://namenode:9000"
 
@@ -96,9 +107,11 @@ for start_idx in range(0, num_images, BATCH_SIZE):
         print(f"[DEBUG] Sent metadata to Kafka: {record['id']}")
 
     producer.flush()
-    print(f"[INFO] Batch {batch_num:03d}: {len(batch_images)} ảnh -> HDFS, metadata gửi Kafka")
+    print(f"[INFO] Batch {batch_num:03d}: {len(uploaded_images)} ảnh -> HDFS, metadata gửi Kafka")
 
     batch_num += 1
+    if end_idx < num_images:
+        time.sleep(INTERVAL_SEC)
     if end_idx < num_images:
         time.sleep(INTERVAL_SEC)
 

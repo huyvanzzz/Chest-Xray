@@ -4,8 +4,10 @@ from PIL import Image
 import torchvision.transforms as T
 import numpy as np
 import pandas as pd
+from io import BytesIO
+import requests
 
-def load_disease_severity(csv_path="../data/disease_severity.csv"):
+def load_disease_severity(csv_path="/app/data/disease_severity.csv"):
     """Load disease severity mapping from CSV file"""
     df = pd.read_csv(csv_path)
     
@@ -21,11 +23,10 @@ def load_disease_severity(csv_path="../data/disease_severity.csv"):
     return severity_mapping
 
 
-def predict_chest_xray(image_path, threshold=0.7, severity_csv="../data/disease_severity.csv"):
+def predict_chest_xray(image_path, threshold=0.7, severity_csv="/app/data/disease_severity.csv"):
     """
     Dự đoán bệnh từ ảnh X-quang ngực
     Args:
-        image_path: đường dẫn đến ảnh
         threshold: ngưỡng xác suất tối thiểu (mặc định 0.7)
         severity_csv: đường dẫn đến file disease_severity.csv
     """
@@ -36,8 +37,24 @@ def predict_chest_xray(image_path, threshold=0.7, severity_csv="../data/disease_
     model = xrv.models.DenseNet(weights="densenet121-res224-nih")
     model.eval()
 
-    # 3. Load ảnh
-    img = Image.open(image_path).convert("L")
+    # 3. Load ảnh - hỗ trợ HDFS URL
+    if image_path.startswith("hdfs://"):
+        # Convert HDFS path to HTTP WebHDFS URL
+        # hdfs://namenode:9000/xray/images/... -> http://namenode:9870/webhdfs/v1/xray/images/...?op=OPEN
+        hdfs_path = image_path.replace("hdfs://namenode:9000", "")
+        webhdfs_url = f"http://namenode:9870/webhdfs/v1{hdfs_path}?op=OPEN"
+        
+        # Download image from HDFS via WebHDFS
+        response = requests.get(webhdfs_url, allow_redirects=True)
+        if response.status_code == 200:
+            img_bytes = BytesIO(response.content)
+            img = Image.open(img_bytes).convert("L")
+        else:
+            raise FileNotFoundError(f"Cannot read HDFS file: {image_path} (status: {response.status_code})")
+    else:
+        # Local file path
+        img = Image.open(image_path).convert("L")
+    
     img = img.resize((224, 224))
 
     # 4. Convert to numpy float32

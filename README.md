@@ -1,691 +1,621 @@
-# Xử Lý Dữ Liệu Y Tế - Genomic Data Processing
+# X-Ray Prediction System - Hệ thống Phân tích Ảnh X-quang Phổi
 
-**Dự án:** Pipeline xử lý ảnh X-quang ngực sử dụng big-data stack được Docker hóa (HDFS, Spark, Kafka) và mô hình AI (TorchXRayVision) để dự đoán bệnh lý theo bộ dữ liệu NIH ChestX-ray14.
+Hệ thống phân tích ảnh X-quang ngực tự động sử dụng Deep Learning và Big Data để phát hiện 14 loại bệnh lý phổi phổ biến, với khả năng xử lý streaming real-time và quản lý hàng đợi ưu tiên dựa trên mức độ nguy hiểm.
 
-**README này hướng dẫn:** cách thiết lập môi trường, chạy script dự đoán AI cục bộ, và chạy pipeline streaming bằng `docker-compose`.
+## Mục lục
 
-**Cấu trúc repository (các file/folder quan trọng):**
-- `ai/` : Mã nguồn AI và các thư viện Python (`chest-xray.py`, `requirements.txt`).
-- `data/` : Các file CSV mẫu và thư mục ảnh (`data.csv`, `patient_subset.csv`, `images/`, `disease_severity.csv`).
-- `spark_streaming.py` : Job Spark Structured Streaming đọc metadata từ Kafka, dự đoán bằng AI và ghi kết quả vào HDFS và MongoDB.
-- `send_test_metadata.py` : Script hỗ trợ upload ảnh theo batch lên HDFS và publish metadata vào Kafka.
-- `docker-compose.yml` : Cấu hình multi-container (HDFS, Spark, Kafka, Zookeeper, Hive và service `spark_streaming`).
-- `ai/chest-xray.py` : Module dự đoán; đọc file `disease_severity.csv` và trả về kết quả dự đoán kèm mức độ nghiêm trọng.
+- [Quick Start](#-quick-start)
+- [Kiến trúc Hệ thống](#-kiến-trúc-hệ-thống)
+- [Pipeline Xử lý](#-pipeline-xử-lý)
+- [Chi tiết Components](#-chi-tiết-components)
+- [Giao diện Web](#-giao-diện-web)
+- [API Documentation](#-api-documentation)
 
-**Tổng quan nhanh**
-- Pipeline yêu cầu các file ảnh được upload vào HDFS (ví dụ: `/xray/images/batch_XXX/`) và metadata chứa `hdfs_path` được publish vào Kafka topic `xray_metadata`.
-- `spark_streaming.py` lắng nghe Kafka, gọi AI predictor, ghi file parquet kết quả vào HDFS và insert records vào MongoDB.
+---
 
-**Yêu cầu hệ thống**
-- Docker & Docker Compose (đã test với Docker Compose v3.9)
-- (Tùy chọn, cho script AI local) Python 3.8+ và môi trường conda/venv
+## Quick Start
 
-**Thư viện Python cho AI (xem `ai/requirements.txt`)**
-- `torch`
-- `torchvision`
-- `torchxrayvision`
-- `pandas`, `Pillow`, `numpy`
+### Yêu cầu hệ thống
 
-**1) Chạy toàn bộ stack với Docker Compose**
-1. Build và khởi động các services (từ thư mục gốc repo):
+- Docker & Docker Compose
+- Tối thiểu 8GB RAM
+- 20GB dung lượng trống
+
+### Khởi động hệ thống
 
 ```bash
-docker-compose up --build
+# 1. Clone repository
+git clone https://github.com/huyvanzzz/Genomic-Data-Processing
+cd Genomic-Data-Processing
+
+# 2. Khởi động toàn bộ hệ thống
+docker compose up -d --build
+
+# 3. Chờ các services khởi động (khoảng 1-2 phút)
+docker compose ps
+
+# 4. Truy cập giao diện web
+# Frontend: http://localhost:3000
+# HDFS NameNode UI: http://localhost:9870
+# Spark Master UI: http://localhost:8080
+# Backend API: http://localhost:8000/docs
 ```
 
-2. Các services được bao gồm (qua `docker-compose.yml`): HDFS (`namenode`, `datanode*`), Spark (`spark-master`, `spark-worker`), Kafka & Zookeeper, các thành phần Hive, và service `spark_streaming`.
-
-3. Khi các container đã healthy:
-   - Upload ảnh vào `./data/images/` (hoặc sử dụng file `data/` có sẵn).
-   - Dùng `send_test_metadata.py` để upload ảnh vào HDFS và publish metadata vào Kafka:
+### Kiểm tra trạng thái
 
 ```bash
-# chạy bên trong container có kết nối mạng với Kafka và HDFS (hoặc chạy local nếu đã cấu hình)
-python send_test_metadata.py
+# Xem logs của từng service
+docker logs xray-backend
+docker logs spark_streaming
+docker logs namenode
+
+# Kiểm tra health của API
+curl http://localhost:8000/health
 ```
 
-4. Service `spark_streaming` đọc Kafka topic `xray_metadata`, kích hoạt dự đoán và ghi kết quả vào HDFS path `hdfs://namenode:8020/xray/predictions/` và MongoDB.
-
-**2) Chạy dự đoán AI cục bộ (test nhanh)**
-1. Tạo môi trường Python và cài đặt dependencies. Ví dụ với conda:
+### Dừng hệ thống
 
 ```bash
-conda create -n xray python=3.10 -y
-conda activate xray
-pip install -r ai/requirements.txt pandas pillow numpy hdfs kafka-python pymongo
+docker compose down
 ```
 
-2. Chạy script dự đoán trên ảnh local (script `ai/chest-xray.py` cung cấp hàm `predict_chest_xray`):
+### Dừng và xóa tất cả dữ liệu
 
 ```bash
-python ai/chest-xray.py
-# Script được thiết lập để chạy một đường dẫn ảnh mẫu khi thực thi trực tiếp.
+docker compose down -v
 ```
 
-3. Script đọc `data/disease_severity.csv` để ánh xạ bệnh với mức độ nghiêm trọng và trả về các dự đoán đạt ngưỡng xác suất đã cấu hình (mặc định 0.7). Điều chỉnh ngưỡng bằng cách gọi `predict_chest_xray(image_path, threshold=0.6)`.
+---
 
-**3) Hướng dẫn sử dụng chi tiết**
+## Kiến trúc Hệ thống
 
-### 3.1) Chuẩn bị dữ liệu ảnh X-quang
-
-**Bước 1: Đặt ảnh vào thư mục local**
-```bash
-# Tạo thư mục chứa ảnh nếu chưa có
-mkdir -p data/images
-
-# Copy ảnh X-quang (định dạng PNG/JPG) vào thư mục
-cp /path/to/your/xray/*.png data/images/
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          React Frontend (Port 3000)                  │
+│  ┌──────────┬──────────┬──────────┬──────────┬──────────┬────────┐ │
+│  │Dashboard │ Upload   │ Priority │ Patients │ Results  │ Logs   │ │
+│  └──────────┴──────────┴──────────┴──────────┴──────────┴────────┘ │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │ HTTP/WebSocket
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    FastAPI Backend (Port 8000)                       │
+│  ┌──────────┬──────────┬──────────┬──────────┬──────────┬────────┐ │
+│  │ Upload   │ Query    │ Priority │ WebSocket│ Image    │ Logs   │ │
+│  │ Router   │ Router   │ Router   │ Router   │ Serving  │ Stream │ │
+│  └──────────┴──────────┴──────────┴──────────┴──────────┴────────┘ │
+└───┬──────────────────────┬──────────────────────┬──────────────────┘
+    │                      │                      │
+    │ Produce              │ Query                │ Read Images
+    ▼                      ▼                      ▼
+┌──────────┐          ┌──────────┐          ┌──────────────────┐
+│  Kafka   │          │ MongoDB  │          │  HDFS Cluster    │
+│  Broker  │          │ Database │          │  (NameNode +     │
+│          │          │          │          │   3 DataNodes)   │
+└────┬─────┘          └────▲─────┘          └────▲─────────────┘
+     │ Topic:              │ Write               │ Write
+     │ xray_metadata       │ Results             │ Images
+     │                     │                     │
+     └─────────────────────┴─────────────────────┘
+                           │
+                           ▼
+     ┌──────────────────────────────────────────────────────┐
+     │         Spark Streaming (spark_streaming.py)         │
+     │  ┌────────────────────────────────────────────────┐  │
+     │  │ 1. Consume from Kafka                          │  │
+     │  │ 2. Read X-ray image from HDFS                  │  │
+     │  │ 3. Run AI prediction (DenseNet121)             │  │
+     │  │ 4. Calculate severity & priority               │  │
+     │  │ 5. Write to MongoDB + HDFS (Parquet)           │  │
+     │  └────────────────────────────────────────────────┘  │
+     └──────────────────────────────────────────────────────┘
 ```
 
-**Bước 2: Chuẩn bị file CSV metadata**
-Tạo hoặc chỉnh sửa `data/patient_subset.csv` với các cột:
-- `Image Index`: Tên file ảnh (VD: `00000001_000.png`)
-- `Patient ID`: ID bệnh nhân
-- `Patient Age`: Tuổi
-- `Patient Sex`: Giới tính (M/F)
-- `Follow-up #`: Số lần theo dõi
+---
 
-Ví dụ:
-```csv
-Image Index,Follow-up #,Patient ID,Patient Age,Patient Sex
-00000001_000.png,0,1,58,M
-00000002_000.png,0,2,45,F
+## Pipeline Xử lý
+
+### 1. Upload & Ingestion Phase
+
+```
+User Upload Image (Frontend)
+         │
+         ▼
+[Backend: Upload Router]
+         │
+         ├─> Validate image (format, size, dimensions)
+         │
+         ├─> Save to HDFS (/xray/images/<uuid>.png)
+         │
+         ├─> Create metadata JSON
+         │   {
+         │     "Image Index": "<uuid>.png",
+         │     "Patient ID": "...",
+         │     "Patient Name": "...",
+         │     "hdfs_path": "hdfs://namenode:9000/xray/images/<uuid>.png"
+         │   }
+         │
+         └─> Publish to Kafka topic: "xray_metadata"
 ```
 
-### 3.2) Upload ảnh lên HDFS
+**Vai trò các component:**
+- **FastAPI Backend**: Xử lý upload, validation, lưu HDFS, publish Kafka
+- **HDFS**: Lưu trữ ảnh X-ray với replication factor = 3
+- **Kafka**: Message queue để decouple upload và processing
 
-**Cách 1: Sử dụng script tự động (khuyến nghị)**
-```bash
-# Chạy script upload batch tự động
-python send_test_metadata.py
+### 2. Streaming Processing Phase
+
+```
+[Spark Streaming Job - Chạy 24/7]
+         │
+         ├─> Read Stream from Kafka
+         │   (auto offset management)
+         │
+         ├─> Parse JSON metadata
+         │
+         ├─> For each message:
+         │   │
+         │   ├─> Read image from HDFS (WebHDFS API)
+         │   │
+         │   ├─> AI Prediction (TorchXRayVision DenseNet121)
+         │   │   - Input: 224x224 grayscale image
+         │   │   - Output: Probabilities for 14 diseases
+         │   │   - Filter: Keep predictions > 0.65 threshold
+         │   │
+         │   ├─> Enrich với disease severity
+         │   │   (từ disease_severity.csv)
+         │   │   - Level 0-4: Bình thường → Cấp cứu
+         │   │   - Description tiếng Việt
+         │   │
+         │   ├─> Sort by severity (high → low)
+         │   │
+         │   └─> Create prediction result JSON
+         │       {
+         │         "Image Index": "...",
+         │         "Patient ID": "...",
+         │         "predicted_label": [
+         │           {
+         │             "disease": "Pneumonia",
+         │             "probability": 0.89,
+         │             "severity_level": 3,
+         │             "severity_name": "Nghiêm trọng",
+         │             "description": "Viêm phổi..."
+         │           },
+         │           ...
+         │         ],
+         │         "timestamp": "...",
+         │         "hdfs_path": "..."
+         │       }
+         │
+         ├─> Write to MongoDB (collection: predictions)
+         │   - For real-time query
+         │   - Indexed by Patient ID, Image Index
+         │
+         └─> Write to HDFS Parquet (backup/analytics)
+             - Path: /xray/predictions/*.parquet
+             - With checkpointing for fault tolerance
 ```
 
-Script này sẽ:
-- Đọc `data/patient_subset.csv`
-- Upload ảnh từ `data/images/` lên HDFS theo batch (`/xray/images/batch_001/`, `/xray/images/batch_002/`, ...)
-- Tự động tạo Kafka topic `xray_metadata` nếu chưa có
-- Publish metadata (bao gồm `hdfs_path`) vào Kafka
+**Vai trò các component:**
+- **Spark Streaming**: Engine xử lý streaming với micro-batch
+- **AI Model**: DenseNet121 pretrained trên NIH ChestX-ray14 dataset
+- **MongoDB**: NoSQL database cho query nhanh
+- **HDFS Parquet**: Long-term storage, analytics
 
-**Cách 2: Upload thủ công bằng HDFS CLI**
-```bash
-# Vào container namenode
-docker exec -it namenode bash
+### 3. Query & Display Phase
 
-# Tạo thư mục trên HDFS
-hdfs dfs -mkdir -p /xray/images/batch_manual
-
-# Upload ảnh từ local vào HDFS
-hdfs dfs -put /data/images/*.png /xray/images/batch_manual/
-
-# Kiểm tra ảnh đã upload
-hdfs dfs -ls /xray/images/batch_manual/
-
-# Xem nội dung file
-hdfs dfs -cat /xray/images/batch_manual/00000001_000.png | head -c 100
+```
+[Frontend Request]
+         │
+         ├─> Dashboard Stats
+         │   GET /api/stats
+         │   └─> MongoDB aggregate: count by severity
+         │
+         ├─> Priority Queue
+         │   GET /api/priority/statistics
+         │   └─> MongoDB query với priority_score
+         │       = (severity_level * 10) + (waiting_hours * 0.5)
+         │       Sort DESC → Ưu tiên bệnh nặng + chờ lâu
+         │
+         ├─> Search Patient
+         │   GET /api/search-by-name?name=...
+         │   └─> MongoDB text search trên Patient Name
+         │
+         ├─> View X-ray Image
+         │   GET /api/xray-image/<image_name>
+         │   └─> Read từ HDFS → Stream to browser
+         │
+         └─> Real-time Updates
+             WebSocket /api/ws/stats
+             └─> Push mới nhất về stats mỗi 5s
 ```
 
-**Cách 3: Sử dụng Python HDFS client**
-```python
-from hdfs import InsecureClient
+**Vai trò các component:**
+- **FastAPI Backend**: REST API + WebSocket server
+- **MongoDB**: Fast queries với indexing
+- **HDFS**: Serve images qua StreamingResponse
 
-# Kết nối HDFS
-client = InsecureClient('http://namenode:9870')
+---
 
-# Upload một ảnh
-client.upload('/xray/images/test/image.png', 'data/images/image.png')
+## Chi tiết Components
 
-# Upload cả thư mục
-for file in os.listdir('data/images'):
-    local_path = f'data/images/{file}'
-    hdfs_path = f'/xray/images/batch_001/{file}'
-    client.upload(hdfs_path, local_path, overwrite=True)
-```
+### 1. HDFS (Hadoop Distributed File System)
 
-### 3.3) Làm việc với HDFS
+**Purpose**: Lưu trữ phân tán, fault-tolerant cho ảnh X-ray và kết quả
 
-**Các lệnh HDFS thường dùng:**
+**Architecture**:
+- **NameNode** (Port 9870): Quản lý metadata, namespace
+- **DataNode 1,2,3** (Ports 9864-9866): Lưu trữ data blocks
+- **Replication Factor**: 3 (mỗi file được copy 3 lần)
 
-```bash
-# Liệt kê file/thư mục
-docker exec namenode hdfs dfs -ls /xray/images/
-
-# Tạo thư mục mới
-docker exec namenode hdfs dfs -mkdir -p /xray/images/new_batch
-
-# Xóa file/thư mục
-docker exec namenode hdfs dfs -rm /xray/images/batch_001/image.png
-docker exec namenode hdfs dfs -rm -r /xray/images/batch_001/
-
-# Download file từ HDFS về local
-docker exec namenode hdfs dfs -get /xray/images/batch_001/image.png /tmp/
-
-# Copy file trong HDFS
-docker exec namenode hdfs dfs -cp /xray/images/batch_001/image.png /xray/backup/
-
-# Kiểm tra dung lượng
-docker exec namenode hdfs dfs -du -h /xray/images/
-
-# Xem thông tin file
-docker exec namenode hdfs dfs -stat "%n %b %y" /xray/images/batch_001/image.png
-
-# Đếm số file
-docker exec namenode hdfs dfs -count /xray/images/
-```
-
-**Cấu trúc thư mục HDFS được khuyến nghị:**
+**Data Layout**:
 ```
 /xray/
-├── images/              # Ảnh gốc
-│   ├── batch_001/
-│   ├── batch_002/
-│   └── batch_003/
-├── predictions/         # Kết quả dự đoán (parquet)
-│   └── checkpoints/     # Spark streaming checkpoints
-└── backup/              # Backup dữ liệu
+├── images/           # Ảnh X-ray upload từ users
+│   ├── <uuid1>.png
+│   ├── <uuid2>.png
+│   └── ...
+└── predictions/      # Kết quả dự đoán (Parquet format)
+    ├── part-00000-*.parquet
+    ├── part-00001-*.parquet
+    └── checkpoints/  # Spark streaming checkpoints
 ```
 
-### 3.4) Đường dẫn HDFS trong hệ thống
+**Connections**:
+- Backend → HDFS: Upload images via WebHDFS REST API
+- Spark → HDFS: Read/Write via `hdfs://` protocol
+- Frontend → Backend → HDFS: Serve images
 
-**Định dạng đường dẫn HDFS:**
+### 2. Kafka
+
+**Purpose**: Message queue để decouple upload và processing
+
+**Architecture**:
+- **Zookeeper** (Port 2181): Coordination service
+- **Kafka Broker** (Port 9092): Message broker
+
+**Topics**:
 ```
-hdfs://namenode:9000/xray/images/batch_001/00000001_000.png
-```
-
-- **Hostname**: `namenode` (tên container trong docker-compose)
-- **Port**: `9000` (HDFS default port) hoặc `8020` (alternative port)
-- **Path**: Đường dẫn tuyệt đối trong HDFS
-
-**Truy cập HDFS từ các service khác nhau:**
-
-1. **Từ Spark:**
-```python
-# Đọc ảnh từ HDFS trong Spark
-df = spark.read.format("image").load("hdfs://namenode:9000/xray/images/batch_001/")
-
-# Ghi parquet vào HDFS
-df.write.mode("append").parquet("hdfs://namenode:8020/xray/predictions/")
-```
-
-2. **Từ Python local (qua HDFS client):**
-```python
-from hdfs import InsecureClient
-
-client = InsecureClient('http://namenode:9870')  # Web HDFS port
-files = client.list('/xray/images/batch_001/')
+xray_metadata:
+  - Partitions: 1
+  - Replication: 1
+  - Producer: FastAPI Backend
+  - Consumer: Spark Streaming
+  - Message Format: JSON với patient info + hdfs_path
 ```
 
-3. **Từ Web UI:**
-- Truy cập: `http://localhost:9870`
-- Navigate: Utilities → Browse the file system
-- Có thể xem, download file trực tiếp
+**Message Flow**:
+```
+Producer (Backend) → Kafka Topic → Consumer (Spark)
+                   ↓ Persistent Log
+                   ↓ Fault Tolerant
+                   ↓ High Throughput
+```
 
-### 3.5) Publish metadata vào Kafka
+### 3. MongoDB
 
-**Định dạng message Kafka:**
-```json
+**Purpose**: NoSQL database cho query nhanh prediction results
+
+**Schema**:
+```javascript
+// Collection: predictions
 {
-  "Image Index": "00000001_000.png",
-  "Follow-up #": "0",
-  "Patient ID": "1",
-  "Patient Age": 58,
+  "_id": ObjectId("..."),
+  "Image Index": "27591426-1685-407a-8b31-d15e2c0b1f8f.png",
+  "Patient ID": "P86325115308",
+  "Patient Name": "Nguyễn Văn A",
+  "Patient Age": 45,
   "Patient Sex": "M",
-  "hdfs_path": "hdfs://namenode:9000/xray/images/batch_001/00000001_000.png"
+  "Follow-up #": "0",
+  "hdfs_path": "hdfs://namenode:9000/xray/images/...",
+  "predicted_label": "[{disease: ..., probability: ..., severity_level: ...}]",
+  "timestamp": "2025-11-22T10:30:00Z",
+  "examined": false,
+  "examined_at": null,
+  "_parsed_severity": 3,      // Computed field
+  "_parsed_disease": "Pneumonia",
+  "_parsed_probability": 0.89,
+  "_priority_score": 32.5,    // (3*10) + (2.5*0.5)
+  "_hours_waiting": 2.5
 }
 ```
 
-**Publish thủ công:**
+**Indexes**:
+- `Patient ID` (unique)
+- `Image Index` (unique)
+- `timestamp` (for time-based queries)
+- `_priority_score` (DESC, for priority queue)
+
+### 4. Spark Streaming
+
+**Purpose**: Real-time processing engine
+
+**Configuration**:
+- **Trigger**: Micro-batch (default: 500ms)
+- **Checkpoint**: HDFS-based for fault tolerance
+- **Memory**: Xử lý in-memory, spill to disk nếu cần
+
+**Micro-batch Processing**:
+```
+Batch 1 (0-500ms)  → Process 10 messages → Write to sinks
+Batch 2 (500ms-1s) → Process 5 messages  → Write to sinks
+Batch 3 (1-1.5s)   → Process 0 messages  → Idle (wait)
+...
+```
+
+**Fault Tolerance**:
+- Checkpoint metadata sau mỗi batch
+- Nếu crash → Restart từ checkpoint
+- Kafka offset auto-commit sau khi xử lý xong
+
+### 5. FastAPI Backend
+
+**Purpose**: API Gateway + Business Logic
+
+**Key Routes**:
 ```python
-from kafka import KafkaProducer
-import json
-
-producer = KafkaProducer(
-    bootstrap_servers=['localhost:9092'],
-    value_serializer=lambda v: json.dumps(v).encode('utf-8')
-)
-
-metadata = {
-    "Image Index": "00000001_000.png",
-    "Patient ID": "1",
-    "Patient Age": 58,
-    "Patient Sex": "M",
-    "hdfs_path": "hdfs://namenode:9000/xray/images/batch_001/00000001_000.png"
-}
-
-producer.send('xray_metadata', metadata)
-producer.flush()
+POST   /api/upload              # Upload X-ray image
+GET    /api/predictions         # Get all predictions
+GET    /api/predictions/{id}    # Get single prediction
+GET    /api/patients            # List all patients
+GET    /api/patients/{id}       # Get patient details
+GET    /api/search-by-name      # Search by patient name
+GET    /api/priority/statistics # Priority queue stats
+GET    /api/priority/by-severity # Filter by severity
+POST   /api/priority/mark-examined # Mark patient as examined
+GET    /api/xray-image/{name}   # Serve X-ray image from HDFS
+GET    /api/spark-logs          # Get Spark logs (batch)
+GET    /api/spark-logs/stream   # Stream Spark logs (SSE)
+WS     /api/ws/stats            # WebSocket for real-time stats
 ```
 
-**Kiểm tra Kafka topic:**
-```bash
-# Vào container Kafka
-docker exec -it kafka bash
+**Utilities**:
+- `kafka_producer.py`: Publish messages to Kafka
+- `mongo_client.py`: MongoDB CRUD + aggregations
+- `hdfs_client.py`: HDFS file operations via WebHDFS
+- `config.py`: Centralized configuration
 
-# Liệt kê topics
+### 6. React Frontend
+
+**Purpose**: User interface
+
+**Pages**:
+1. **Dashboard** (`/`)
+   - Real-time stats: Tổng ca, phân bố theo severity
+   - Charts: Bar chart, severity breakdown
+   - WebSocket updates mỗi 5s
+
+2. **Upload** (`/upload`)
+   - Drag & drop hoặc click để chọn file
+   - Preview ảnh trước khi upload
+   - Nhập thông tin bệnh nhân (Patient ID, Name, Age, Sex)
+   - Upload → Kafka → Spark → Kết quả sau vài giây
+
+3. **Priority Queue** (`/priority`)
+   - Danh sách bệnh nhân sort theo priority score
+   - Filter theo severity level
+   - Filter theo date range
+   - Checkbox "Đã khám" để đánh dấu
+   - Click vào row → Modal hiển thị chi tiết + ảnh X-ray
+
+4. **Patients** (`/patients`)
+   - Danh sách tất cả bệnh nhân
+   - Click vào row → Xem tất cả ảnh X-ray của bệnh nhân đó
+   - Hiển thị lịch sử khám
+
+5. **Results** (`/results`)
+   - Tìm kiếm theo tên bệnh nhân
+   - Hiển thị kết quả dự đoán
+   - Click vào card → Modal chi tiết + ảnh
+
+6. **Logs** (`/logs`)
+   - Xem logs của Spark Streaming container
+   - Chọn số dòng (50-1000)
+   - Stream real-time logs
+   - Download logs
+   - Auto-scroll
+
+**Key Features**:
+- **Real-time Updates**: WebSocket cho Dashboard
+- **Modal Component**: Reusable `PatientDetailModal.tsx`
+- **Responsive Design**: TailwindCSS
+- **State Management**: React Hooks (useState, useEffect, useRef)
+
+---
+
+## Giao diện Web
+
+### Dashboard
+![Dashboard](docs/screenshots/dashboard.png)
+- Thống kê tổng quan
+- Bar chart phân bố ca bệnh
+- Real-time updates qua WebSocket
+
+### Priority Queue
+![Priority](docs/screenshots/priority.png)
+- Hàng đợi ưu tiên dựa trên severity + thời gian chờ
+- Filter theo date, severity
+- Đánh dấu đã khám
+
+### Patient Detail Modal
+![Modal](docs/screenshots/modal.png)
+- Ảnh X-ray từ HDFS
+- Thông tin bệnh nhân
+- Danh sách bệnh dự đoán với xác suất & mức độ
+
+---
+
+## API Documentation
+
+### Upload Image
+
+```bash
+POST /api/upload
+Content-Type: multipart/form-data
+
+Form Data:
+- file: <image.png>
+- patient_id: "P12345"
+- patient_name: "Nguyễn Văn A"
+- patient_age: 45
+- patient_sex: "M"
+
+Response:
+{
+  "success": true,
+  "message": "Uploaded successfully",
+  "image_name": "27591426-1685-407a-8b31-d15e2c0b1f8f.png",
+  "hdfs_path": "hdfs://namenode:9000/xray/images/..."
+}
+```
+
+### Get Priority Queue
+
+```bash
+GET /api/priority/statistics?sort_order=desc&limit=100
+
+Response:
+{
+  "summary": [
+    {"severity_level": 4, "severity_name": "Cấp cứu", "count": 5},
+    {"severity_level": 3, "severity_name": "Nghiêm trọng", "count": 12},
+    ...
+  ],
+  "total": 50,
+  "predictions": [
+    {
+      "_id": "...",
+      "Patient Name": "Nguyễn Văn A",
+      "_priority_score": 42.5,
+      "_hours_waiting": 2.5,
+      "_parsed_severity": 4,
+      ...
+    }
+  ]
+}
+```
+
+### Stream Spark Logs
+
+```bash
+GET /api/spark-logs/stream
+
+# Server-Sent Events (SSE)
+# Continuous stream of log lines
+```
+
+---
+
+## Cơ chế Priority Score
+
+```python
+priority_score = (severity_level * 10) + (hours_waiting * 0.5)
+```
+
+**Ví dụ**:
+- Bệnh nhân A: Severity 4 (Cấp cứu), đợi 2 giờ
+  → Score = 4*10 + 2*0.5 = **41.0**
+
+- Bệnh nhân B: Severity 3 (Nghiêm trọng), đợi 5 giờ
+  → Score = 3*10 + 5*0.5 = **32.5**
+
+- Bệnh nhân C: Severity 2 (Trung bình), đợi 10 giờ
+  → Score = 2*10 + 10*0.5 = **25.0**
+
+→ **Thứ tự ưu tiên**: A > B > C
+
+**Logic**:
+- Bệnh nặng luôn được ưu tiên (weight = 10)
+- Thời gian chờ cũng ảnh hưởng nhưng nhỏ hơn (weight = 0.5)
+- Tránh trường hợp bệnh nhẹ nhưng chờ quá lâu bị bỏ quên
+
+---
+
+## Troubleshooting
+
+### HDFS Safemode
+
+```bash
+# Nếu HDFS bị stuck ở safemode
+docker exec -it namenode bash
+hdfs dfsadmin -safemode leave
+```
+
+### Kafka không nhận message
+
+```bash
+# Kiểm tra Kafka topics
+docker exec -it kafka bash
 kafka-topics.sh --list --bootstrap-server localhost:9092
 
 # Xem messages trong topic
 kafka-console-consumer.sh --bootstrap-server localhost:9092 \
-  --topic xray_metadata --from-beginning --max-messages 10
+  --topic xray_metadata --from-beginning
 ```
 
-**4) Các file dữ liệu**
-- `data/data.csv` : CSV chứa id ảnh và nhãn nhị phân (tập con mẫu). Các cột bao gồm 14 nhãn NIH cộng với một số cột đặc thù của dataset.
-- `data/disease_severity.csv` : CSV ánh xạ `Disease,Severity_Level,Severity_Name,Description`. Được sử dụng bởi `ai/chest-xray.py` để gán mức độ nghiêm trọng cho các nhãn được phát hiện.
-- `data/patient_subset.csv` : CSV chứa metadata bệnh nhân để upload lên HDFS và Kafka.
-
-**5) Chi tiết streaming pipeline**
-
-### 5.1) Luồng xử lý dữ liệu
-
-```
-Ảnh X-quang (Local)
-    ↓ upload
-HDFS (/xray/images/batch_XXX/)
-    ↓ metadata (hdfs_path, patient info)
-Kafka (topic: xray_metadata)
-    ↓ consume
-Spark Streaming
-    ↓ predict (AI model)
-HDFS (/xray/predictions/) + MongoDB
-```
-
-### 5.2) Script upload ảnh: `send_test_metadata.py`
-
-**Chức năng:**
-- Đọc `patient_subset.csv` để lấy danh sách ảnh cần xử lý
-- Upload ảnh từ `./data/images` vào HDFS theo batch (mỗi batch 5 ảnh)
-- Tự động tạo Kafka topic `xray_metadata` nếu chưa tồn tại
-- Publish metadata JSON (bao gồm `hdfs_path`) vào Kafka
-- Delay 10 giây giữa các batch
-
-**Cấu hình trong script:**
-```python
-KAFKA_SERVER = 'kafka:9092'           # Kafka broker
-TOPIC = 'xray_metadata'                # Topic name
-HDFS_URL = 'http://namenode:9870'     # HDFS Web UI
-HDFS_BASE_DIR = "/xray/images"        # Thư mục gốc trên HDFS
-LOCAL_IMAGES_DIR = "/app/data/images" # Thư mục ảnh local
-BATCH_SIZE = 5                         # Số ảnh mỗi batch
-INTERVAL_SEC = 10                      # Delay giữa các batch
-```
-
-**Chạy script:**
-```bash
-# Trong container spark_streaming
-docker exec -it spark_streaming python send_test_metadata.py
-
-# Hoặc từ local (nếu đã config network)
-python send_test_metadata.py
-```
-
-**Output mẫu:**
-```
-[DEBUG] Topic xray_metadata đã tồn tại
-[DEBUG] Folder HDFS /xray/images đã tồn tại
-[DEBUG] Batch 001 - preparing 5 images
-[DEBUG] Upload /app/data/images/00000001_000.png -> /xray/images/batch_001/00000001_000.png
-[DEBUG] Sent metadata to Kafka: 00000001_000.png
-[INFO] Batch 001: 5 ảnh -> HDFS, metadata gửi Kafka
-```
-
-### 5.3) Spark Streaming job: `spark_streaming.py`
-
-**Chức năng:**
-- Consume messages từ Kafka topic `xray_metadata`
-- Parse JSON metadata
-- Gọi AI predictor (via UDF) với `hdfs_path`
-- Ghi kết quả dự đoán vào:
-  - HDFS: `/xray/predictions/` (định dạng Parquet)
-  - MongoDB: collection `xray.predictions`
-
-**Schema dữ liệu xử lý:**
-```python
-schema = StructType([
-    StructField("Image Index", StringType()),
-    StructField("Patient ID", StringType()),
-    StructField("Patient Age", IntegerType()),
-    StructField("Patient Sex", StringType()),
-    StructField("hdfs_path", StringType())
-])
-```
-
-**Kết quả dự đoán:**
-- Cột mới: `predicted_label` (string chứa JSON kết quả)
-- Format: `{"disease": "Pneumonia", "probability": 0.85, "severity": 3}`
-
-**Checkpoint location:**
-- HDFS: `hdfs://namenode:8020/xray/predictions/checkpoints/`
-- MongoDB: `hdfs://namenode:8020/xray/predictions/checkpoints_mongo/`
-
-**Xem logs:**
-```bash
-# Xem logs Spark Streaming
-docker logs -f spark_streaming
-
-# Hoặc xem trong Spark UI
-# Truy cập: http://localhost:8080
-```
-
-### 5.4) Xem kết quả dự đoán
-
-**Từ HDFS (Parquet files):**
-```bash
-# Liệt kê các file parquet
-docker exec namenode hdfs dfs -ls /xray/predictions/
-
-# Đọc parquet bằng Python
-from pyspark.sql import SparkSession
-spark = SparkSession.builder.getOrCreate()
-df = spark.read.parquet("hdfs://namenode:8020/xray/predictions/")
-df.show(10)
-```
-
-**Từ MongoDB:**
-```python
-from pymongo import MongoClient
-
-# Kết nối MongoDB
-client = MongoClient("mongodb+srv://Bigdata:<password>@clusterxray.ahgkigy.mongodb.net/")
-db = client["xray"]
-collection = db["predictions"]
-
-# Query kết quả
-for doc in collection.find().limit(10):
-    print(doc)
-
-# Query theo điều kiện
-high_risk = collection.find({"predicted_label": {"$regex": "severity.*4"}})
-```
-
-**Từ Web UI HDFS:**
-- Truy cập: `http://localhost:9870/explorer.html#/xray/predictions`
-- Download parquet files để phân tích offline
-
-Lưu ý:
-- Khi chạy Spark jobs import các hàm Python sử dụng thư viện ML nặng (PyTorch), đảm bảo worker environment có cùng dependencies hoặc đóng gói hàm thành service nhỏ; việc nhúng các thư viện native lớn vào Spark UDFs có thể rất nặng.
-
-**6) Quản lý và giám sát hệ thống**
-
-### 6.1) Web UI các services
-
-| Service | URL | Mô tả |
-|---------|-----|-------|
-| HDFS NameNode | http://localhost:9870 | Quản lý file system, xem dung lượng, browse files |
-| Spark Master | http://localhost:8080 | Giám sát Spark cluster, workers, applications |
-| Spark Worker | http://localhost:8081 | Chi tiết worker node, tasks đang chạy |
-| Kafka Manager | Cần cài thêm | Quản lý topics, consumers, partitions |
-
-### 6.2) Giám sát HDFS
+### Spark Streaming bị crash
 
 ```bash
-# Kiểm tra HDFS health
-docker exec namenode hdfs dfsadmin -report
+# Xem logs
+docker logs spark_streaming
 
-# Xem dung lượng sử dụng
-docker exec namenode hdfs dfs -df -h
+# Restart
+docker restart spark_streaming
 
-# Kiểm tra replication
-docker exec namenode hdfs fsck /xray -files -blocks -locations
+# Clear checkpoints (cẩn thận!)
+docker exec -it namenode bash
+hdfs dfs -rm -r /xray/predictions/checkpoints_mongo
+hdfs dfs -rm -r /xray/predictions/checkpoints
 ```
 
-### 6.3) Giám sát Kafka
+### MongoDB connection issues
 
 ```bash
-# Xem danh sách consumer groups
-docker exec kafka kafka-consumer-groups.sh --bootstrap-server localhost:9092 --list
+# Test connection
+docker exec -it mongodb mongosh -u admin -p admin123
 
-# Xem lag của consumer
-docker exec kafka kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
-  --group spark-streaming-group --describe
-
-# Xem số messages trong topic
-docker exec kafka kafka-run-class.sh kafka.tools.GetOffsetShell \
-  --broker-list localhost:9092 --topic xray_metadata
+# Xem collections
+use xray
+db.predictions.countDocuments()
+db.predictions.find().limit(5)
 ```
 
-### 6.4) Giám sát Spark
+---
 
-```bash
-# Xem applications đang chạy
-docker exec spark-master /spark/bin/spark-submit --status
+## Technology Stack
 
-# Xem logs của worker
-docker logs -f spark-worker
+| Component | Technology | Version |
+|-----------|-----------|---------|
+| Frontend | React + TypeScript | 19.2.0 |
+| UI Framework | TailwindCSS | 3.4.18 |
+| Backend | FastAPI | 0.109.0 |
+| Web Server | Nginx | Alpine |
+| Streaming | Apache Spark | 3.2.1 |
+| Message Queue | Apache Kafka | Latest |
+| Storage | HDFS (Hadoop) | 3.2.1 |
+| Database | MongoDB | 7.0 |
+| AI Model | TorchXRayVision | Latest |
+| Deep Learning | PyTorch | Latest |
+| Container | Docker + Docker Compose | Latest |
 
-# Kill application
-docker exec spark-master /spark/bin/spark-submit --kill <app-id>
-```
+---
 
-### 6.5) Backup và phục hồi
+## License
 
-**Backup HDFS:**
-```bash
-# Backup thư mục images
-docker exec namenode hdfs dfs -get /xray/images /backup/images_backup
+This project is licensed under the MIT License.
 
-# Hoặc dùng distcp cho large datasets
-docker exec namenode hadoop distcp /xray/images /backup/images_backup
-```
+---
 
-**Backup MongoDB:**
-```bash
-# Export collection
-mongodump --uri="mongodb+srv://..." --db=xray --collection=predictions --out=/backup/
-```
+## Contributors
 
-**Restore:**
-```bash
-# Restore HDFS
-docker exec namenode hdfs dfs -put /backup/images_backup/* /xray/images/
+- **Big Daddy** - Đại học Công nghệ - Đại học Quốc gia Hà Nội
 
-# Restore MongoDB
-mongorestore --uri="mongodb+srv://..." --db=xray /backup/xray/
-```
+---
 
-**7) MongoDB**
-- Thông tin kết nối có trong `spark_streaming.py` và `mongodb.py`. Cập nhật `MONGO_URI` / thông tin đăng nhập trước khi sử dụng remote MongoDB Atlas cluster.
-- Database: `xray`
-- Collection: `predictions` (chứa kết quả dự đoán từ Spark Streaming)
-- Indexes được khuyến nghị: `{"Image Index": 1}`, `{"Patient ID": 1}`, `{"predicted_label": 1}`
+## Acknowledgments
 
-**8) Khắc phục sự cố**
-
-### 8.1) Lỗi thường gặp
-
-**Lỗi 1: HDFS SafeMode**
-```
-org.apache.hadoop.hdfs.server.namenode.SafeModeException
-```
-**Giải pháp:**
-```bash
-# Thoát safe mode
-docker exec namenode hdfs dfsadmin -safemode leave
-
-# Kiểm tra trạng thái
-docker exec namenode hdfs dfsadmin -safemode get
-```
-
-**Lỗi 2: Kafka Connection Refused**
-```
-kafka.errors.NoBrokersAvailable
-```
-**Giải pháp:**
-```bash
-# Kiểm tra Kafka đang chạy
-docker ps | grep kafka
-
-# Restart Kafka
-docker-compose restart kafka zookeeper
-
-# Kiểm tra logs
-docker logs kafka
-```
-
-**Lỗi 3: Model Download Failed**
-```
-urllib.error.URLError: <urlopen error [Errno -2] Name or service not known>
-```
-**Giải pháp:**
-```bash
-# Download model thủ công
-wget https://github.com/mlmed/torchxrayvision/releases/download/v1/nih-densenet121-d121-tw-lr001-rot45-tr15-sc15-seed0-best.pt \
-  -O ~/.torchxrayvision/models_data/nih-densenet121-d121-tw-lr001-rot45-tr15-sc15-seed0-best.pt
-```
-
-**Lỗi 4: Out of Memory (Spark)**
-```
-java.lang.OutOfMemoryError: Java heap space
-```
-**Giải pháp:**
-Tăng memory cho Spark trong `docker-compose.yml`:
-```yaml
-spark-worker:
-  environment:
-    - SPARK_WORKER_MEMORY=4g
-    - SPARK_EXECUTOR_MEMORY=2g
-```
-
-**Lỗi 5: Permission Denied (HDFS)**
-```
-Permission denied: user=root, access=WRITE
-```
-**Giải pháp:**
-```bash
-# Thay đổi quyền truy cập
-docker exec namenode hdfs dfs -chmod -R 777 /xray/
-
-# Hoặc thay đổi owner
-docker exec namenode hdfs dfs -chown -R root:supergroup /xray/
-```
-
-### 8.2) Debug tips
-
-**Kiểm tra kết nối giữa containers:**
-```bash
-# Ping từ spark_streaming tới namenode
-docker exec spark_streaming ping namenode
-
-# Ping tới kafka
-docker exec spark_streaming ping kafka
-
-# Kiểm tra port
-docker exec spark_streaming nc -zv namenode 9000
-docker exec spark_streaming nc -zv kafka 9092
-```
-
-**Xem logs chi tiết:**
-```bash
-# Tất cả containers
-docker-compose logs -f
-
-# Một container cụ thể
-docker logs -f spark_streaming --tail 100
-
-# Grep error
-docker logs spark_streaming 2>&1 | grep -i error
-```
-
-**Restart services:**
-```bash
-# Restart một service
-docker-compose restart spark_streaming
-
-# Restart tất cả
-docker-compose restart
-
-# Rebuild và restart
-docker-compose up -d --build spark_streaming
-```
-
-**Clean up và reset:**
-```bash
-# Xóa containers và volumes
-docker-compose down -v
-
-# Xóa images
-docker rmi $(docker images -q genomic-data-processing*)
-
-# Start lại từ đầu
-docker-compose up --build
-```
-
-**9) Workflow hoàn chỉnh - Ví dụ từ đầu đến cuối**
-
-### Bước 1: Khởi động hệ thống
-```bash
-# Clone repo
-git clone https://github.com/huyvanzzz/Genomic-Data-Processing.git
-cd Genomic-Data-Processing
-
-# Khởi động stack
-docker-compose up -d --build
-
-# Đợi các services healthy (2-3 phút)
-docker-compose ps
-```
-
-### Bước 2: Chuẩn bị dữ liệu
-```bash
-# Đặt ảnh X-quang vào thư mục
-cp /path/to/xray/images/*.png data/images/
-
-# Kiểm tra file CSV
-cat data/patient_subset.csv
-```
-
-### Bước 3: Upload dữ liệu
-```bash
-# Chạy script upload
-docker exec spark_streaming python send_test_metadata.py
-
-# Hoặc upload thủ công
-docker exec namenode hdfs dfs -put /data/images/00000001_000.png /xray/images/manual/
-```
-
-### Bước 4: Kiểm tra dữ liệu đã upload
-```bash
-# Xem trên HDFS
-docker exec namenode hdfs dfs -ls /xray/images/batch_001/
-
-# Xem messages Kafka
-docker exec kafka kafka-console-consumer.sh \
-  --bootstrap-server localhost:9092 \
-  --topic xray_metadata --from-beginning --max-messages 5
-```
-
-### Bước 5: Giám sát Spark Streaming
-```bash
-# Xem logs real-time
-docker logs -f spark_streaming
-
-# Hoặc qua Web UI
-# Mở browser: http://localhost:8080
-```
-
-### Bước 6: Xem kết quả
-```bash
-# Xem file parquet trên HDFS
-docker exec namenode hdfs dfs -ls /xray/predictions/
-
-# Query MongoDB
-docker exec spark_streaming python -c "
-from pymongo import MongoClient
-client = MongoClient('mongodb+srv://...')
-for doc in client.xray.predictions.find().limit(5):
-    print(doc)
-"
-```
-
-### Bước 7: Download kết quả về local
-```bash
-# Download parquet files
-docker exec namenode hdfs dfs -get /xray/predictions/*.parquet ./results/
-
-# Đọc bằng pandas
-python -c "
-import pandas as pd
-df = pd.read_parquet('results/part-00000-*.parquet')
-print(df.head())
-"
-```
+- **NIH ChestX-ray14 Dataset**: Training data cho AI model
+- **TorchXRayVision**: Pretrained models
+- **Apache Spark**: Streaming processing framework
+- **FastAPI**: Modern Python web framework
 

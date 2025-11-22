@@ -95,6 +95,38 @@ class HDFSClient:
         except Exception as e:
             logger.error(f"Lỗi xóa file HDFS: {e}")
             return False
+    
+    def read_file(self, hdfs_path: str) -> bytes:
+        """
+        Đọc file từ HDFS
+        
+        Args:
+            hdfs_path: Full HDFS URI (hdfs://namenode:9000/...) hoặc path tương đối
+            
+        Returns:
+            Binary data của file
+        """
+        try:
+            if not self.client:
+                self.connect()
+            
+            # Xử lý HDFS URI nếu có
+            if hdfs_path.startswith('hdfs://'):
+                # Extract path from URI: hdfs://namenode:9000/path/to/file -> /path/to/file
+                path = hdfs_path.split('hdfs://namenode:9000', 1)[1] if 'hdfs://namenode:9000' in hdfs_path else hdfs_path
+            else:
+                path = hdfs_path
+            
+            # Đọc file
+            with self.client.read(path) as reader:
+                data = reader.read()
+            
+            logger.info(f"Đọc thành công file: {path}, size: {len(data)} bytes")
+            return data
+            
+        except Exception as e:
+            logger.error(f"Lỗi đọc file HDFS {hdfs_path}: {e}")
+            return None
 
 # Singleton instance
 hdfs_client = HDFSClient()
