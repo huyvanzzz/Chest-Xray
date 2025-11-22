@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import PatientDetailModal from '../components/PatientDetailModal';
 
 interface PredictionData {
   disease: string;
@@ -18,6 +19,13 @@ interface PredictionResult {
   hdfs_path: string;
   predicted_label: string;
   timestamp: string;
+  _parsed_severity: number;
+  _parsed_disease: string;
+  _parsed_probability: number;
+  _priority_score?: number;
+  _hours_waiting?: number;
+  examined?: boolean;
+  examined_at?: string;
 }
 
 export const ResultsPage: React.FC = () => {
@@ -25,6 +33,8 @@ export const ResultsPage: React.FC = () => {
   const [predictions, setPredictions] = useState<PredictionResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [selectedPrediction, setSelectedPrediction] = useState<PredictionResult | null>(null);
+  const [showModal, setShowModal] = useState(false);
 
   const handleSearch = async () => {
     if (!searchName.trim()) return;
@@ -35,7 +45,17 @@ export const ResultsPage: React.FC = () => {
       const response = await fetch(`/api/search-by-name?name=${encodeURIComponent(searchName.trim())}`);
       if (response.ok) {
         const data = await response.json();
-        setPredictions(data.results || []);
+        // Map predictions to add parsed fields for modal compatibility
+        const mappedPredictions = (data.results || []).map((pred: any) => {
+          const parsedData = parsePrediction(pred.predicted_label);
+          return {
+            ...pred,
+            _parsed_severity: parsedData?.severity_level || 0,
+            _parsed_disease: parsedData?.disease || 'Unknown',
+            _parsed_probability: parsedData?.probability || 0,
+          };
+        });
+        setPredictions(mappedPredictions);
       } else {
         setPredictions([]);
       }
@@ -45,6 +65,16 @@ export const ResultsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setSelectedPrediction(null);
+  };
+
+  const handleCardClick = (prediction: PredictionResult) => {
+    setSelectedPrediction(prediction);
+    setShowModal(true);
   };
 
   const parsePrediction = (label: string): PredictionData | null => {
@@ -86,6 +116,9 @@ export const ResultsPage: React.FC = () => {
     }
     return prob.toFixed(1);
   };
+  useEffect(()=> {
+      document.title = "Results - X-Ray System";
+    }, []);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -177,7 +210,11 @@ export const ResultsPage: React.FC = () => {
               const probability = formatProbability(data.probability);
 
               return (
-                <div key={prediction._id} className={`border-l-4 rounded-lg shadow-lg p-6 ${getSeverityColor(data.severity_level)}`}>
+                <div 
+                  key={prediction._id} 
+                  className={`border-l-4 rounded-lg shadow-lg p-6 cursor-pointer transition-all hover:shadow-xl hover:scale-[1.02] ${getSeverityColor(data.severity_level)}`}
+                  onClick={() => handleCardClick(prediction)}
+                >
                   {/* Header */}
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex-1">
@@ -253,6 +290,14 @@ export const ResultsPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modal Chi tiết Bệnh nhân */}
+      <PatientDetailModal
+        prediction={selectedPrediction}
+        isOpen={showModal}
+        onClose={closeModal}
+        showExaminedButton={false}
+      />
     </div>
   );
 };

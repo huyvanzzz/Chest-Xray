@@ -20,6 +20,8 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     connectWebSocket();
+
+    document.title = "Dashboard - X-Ray System";
     
     return () => {
       if (reconnectTimeoutRef.current) {
@@ -33,10 +35,13 @@ export const Dashboard: React.FC = () => {
 
   const connectWebSocket = () => {
     try {
-      // Get WebSocket URL from current location
+      // Get WebSocket URL - use localhost:8000 for local dev, otherwise use current host
+      const isDevelopment = process.env.NODE_ENV === 'development' && window.location.port === '3000';
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/stats`;
+      const wsHost = isDevelopment ? 'localhost:8000' : window.location.host;
+      const wsUrl = `${wsProtocol}//${wsHost}/api/ws/stats`;
       
+      console.log('Connecting to WebSocket:', wsUrl);
       const ws = new WebSocket(wsUrl);
       
       ws.onopen = () => {

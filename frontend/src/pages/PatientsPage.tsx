@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useEffectEvent } from 'react';
 
 interface Patient {
   _id: string;
@@ -70,6 +70,10 @@ export const PatientsPage: React.FC = () => {
   useEffect(() => {
     fetchPatients();
   }, [searchTerm]);
+
+  useEffect(()=> {
+    document.title = "Patients Management - X-Ray System";
+  }, []);
 
   useEffect(() => {
     if (showAddModal) {

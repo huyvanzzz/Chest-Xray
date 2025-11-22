@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingDown, TrendingUp, AlertCircle, Activity, Filter } from 'lucide-react';
+import PatientDetailModal from '../components/PatientDetailModal';
 
 interface Prediction {
   _id: string;
@@ -43,6 +44,8 @@ const PriorityPage: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [selectedSeverity, setSelectedSeverity] = useState<number | null>(null);
   const [filteredPredictions, setFilteredPredictions] = useState<Prediction[]>([]);
+  const [selectedPrediction, setSelectedPrediction] = useState<Prediction | null>(null);
+  const [showModal, setShowModal] = useState(false);
 
   const severityColors = {
     0: { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
@@ -103,6 +106,9 @@ const PriorityPage: React.FC = () => {
     }
   };
 
+  useEffect(()=> {
+      document.title = "Priority Management - X-Ray System";
+    }, []);
   useEffect(() => {
     fetchStatistics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -164,6 +170,20 @@ const PriorityPage: React.FC = () => {
     }
   };
 
+  const handleRowClick = (prediction: Prediction, event: React.MouseEvent) => {
+    // Không mở modal nếu click vào checkbox
+    if ((event.target as HTMLElement).closest('input[type="checkbox"]')) {
+      return;
+    }
+    setSelectedPrediction(prediction);
+    setShowModal(true);
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setSelectedPrediction(null);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -173,12 +193,11 @@ const PriorityPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 px-4 py-8 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Thống kê theo mức độ ưu tiên</h1>
-          <p className="text-gray-500 mt-1">Phân loại và quản lý ca bệnh theo mức độ nghiêm trọng</p>
         </div>
         <Activity className="w-8 h-8 text-blue-500" />
       </div>
@@ -356,7 +375,8 @@ const PriorityPage: React.FC = () => {
                 filteredPredictions.map((prediction, index) => (
                   <tr 
                     key={prediction._id} 
-                    className={`hover:bg-gray-50 ${prediction.examined ? 'bg-green-50 opacity-60' : ''}`}
+                    onClick={(e) => handleRowClick(prediction, e)}
+                    className={`hover:bg-gray-50 cursor-pointer transition-colors ${prediction.examined ? 'bg-green-50 opacity-60' : ''}`}
                   >
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {index + 1}
@@ -368,6 +388,7 @@ const PriorityPage: React.FC = () => {
                         checked={prediction.examined || false}
                         onChange={(e) => handleExaminedChange(prediction._id, e.target.checked)}
                         className="w-5 h-5 text-green-600 border-gray-300 rounded focus:ring-green-500 cursor-pointer"
+                        onClick={(e) => e.stopPropagation()}
                       />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -446,6 +467,15 @@ const PriorityPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modal Chi tiết Bệnh nhân */}
+      <PatientDetailModal
+        prediction={selectedPrediction}
+        isOpen={showModal}
+        onClose={closeModal}
+        onExaminedChange={handleExaminedChange}
+        showExaminedButton={true}
+      />
     </div>
   );
 };

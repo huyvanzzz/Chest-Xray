@@ -738,11 +738,21 @@ class MongoDBClient:
                 self.connect()
             
             # Get all predictions và filter bằng Python vì severity_level trong JSON
+            from bson import ObjectId
+            from datetime import datetime, timezone
+            
             cursor = self.collection.find().sort('_id', -1)
             matching_predictions = []
             
             for doc in cursor:
-                doc['_id'] = str(doc['_id'])
+                # Extract timestamp from ObjectId
+                if isinstance(doc['_id'], ObjectId):
+                    doc['timestamp'] = doc['_id'].generation_time.isoformat()
+                    doc['_id'] = str(doc['_id'])
+                else:
+                    doc['_id'] = str(doc['_id'])
+                    doc['timestamp'] = None
+                    
                 doc = sanitize_document(doc)
                 
                 # Parse severity level
@@ -771,9 +781,39 @@ class MongoDBClient:
                     except:
                         pass
             
+            # Calculate priority score for matching predictions
+            now = datetime.now(timezone.utc)
+            for pred in matching_predictions:
+                severity = pred.get('_parsed_severity', 0)
+                
+                # Calculate hours waiting from timestamp
+                hours_waiting = 0
+                if pred.get('timestamp'):
+                    try:
+                        pred_time = datetime.fromisoformat(pred['timestamp'].replace('Z', '+00:00'))
+                        time_diff = now - pred_time
+                        hours_waiting = time_diff.total_seconds() / 3600
+                    except Exception as e:
+                        logger.warning(f"Cannot parse timestamp: {e}")
+                        hours_waiting = 0
+                
+                # Priority formula: severity contributes more but waiting time adds up
+                priority_score = (severity * 10) + (hours_waiting * 0.5)
+                pred['_priority_score'] = round(priority_score, 2)
+                pred['_hours_waiting'] = round(hours_waiting, 1)
+            
+            # Sort by priority score (not examined first, then by score)
+            not_examined = [p for p in matching_predictions if not p.get('examined', False)]
+            examined = [p for p in matching_predictions if p.get('examined', False)]
+            
+            not_examined_sorted = sorted(not_examined, key=lambda x: x.get('_priority_score', 0), reverse=True)
+            examined_sorted = sorted(examined, key=lambda x: x.get('_priority_score', 0), reverse=True)
+            
+            sorted_predictions = not_examined_sorted + examined_sorted
+            
             # Apply pagination
-            total = len(matching_predictions)
-            paginated = matching_predictions[skip:skip + limit]
+            total = len(sorted_predictions)
+            paginated = sorted_predictions[skip:skip + limit]
             
             logger.info(f"Found {total} predictions with severity_level={severity_level}")
             return {
