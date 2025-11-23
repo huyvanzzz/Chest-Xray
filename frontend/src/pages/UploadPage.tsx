@@ -9,16 +9,28 @@ interface UploadResponse {
   timestamp: string;
 }
 
+interface Patient {
+  patient_id: string;
+  patient_name: string;
+  patient_age?: number;
+  patient_sex?: string;
+}
+
 export const UploadPage: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [patientName, setPatientName] = useState('');
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [searchResults, setSearchResults] = useState<Patient[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-   useEffect(()=> {
-        document.title = "Upload - X-Ray System";
-      }, []);
+  
+  useEffect(() => {
+    document.title = "Upload - X-Ray System";
+  }, []);
   
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -47,6 +59,45 @@ export const UploadPage: React.FC = () => {
     e.preventDefault();
   };
 
+  // Search patients when name changes
+  useEffect(() => {
+    const searchPatients = async () => {
+      if (patientName.trim().length < 2) {
+        setSearchResults([]);
+        setShowDropdown(false);
+        return;
+      }
+
+      setSearchLoading(true);
+      try {
+        const response = await fetch(`/api/patients?search=${encodeURIComponent(patientName.trim())}&limit=10`);
+        if (response.ok) {
+          const data = await response.json();
+          setSearchResults(data.results || []);
+          setShowDropdown(data.results && data.results.length > 0);
+        }
+      } catch (err) {
+        console.error('Error searching patients:', err);
+      } finally {
+        setSearchLoading(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(searchPatients, 300);
+    return () => clearTimeout(debounceTimer);
+  }, [patientName]);
+
+  const handleSelectPatient = (patient: Patient) => {
+    setSelectedPatient(patient);
+    setPatientName(patient.patient_name);
+    setShowDropdown(false);
+  };
+
+  const handlePatientNameChange = (value: string) => {
+    setPatientName(value);
+    setSelectedPatient(null); // Clear selection when typing
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -62,7 +113,21 @@ export const UploadPage: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('patient_name', patientName.trim());
+      
+      // If selected existing patient, use their patient_id
+      if (selectedPatient) {
+        formData.append('patient_id', selectedPatient.patient_id);
+        formData.append('patient_name', selectedPatient.patient_name);
+        if (selectedPatient.patient_age) {
+          formData.append('patient_age', selectedPatient.patient_age.toString());
+        }
+        if (selectedPatient.patient_sex) {
+          formData.append('patient_sex', selectedPatient.patient_sex);
+        }
+      } else {
+        // New patient - only name is required
+        formData.append('patient_name', patientName.trim());
+      }
       formData.append('follow_up', '0');
 
       // Use /api/upload which will be proxied by nginx to backend
@@ -85,6 +150,9 @@ export const UploadPage: React.FC = () => {
       setFile(null);
       setPreview(null);
       setPatientName('');
+      setSelectedPatient(null);
+      setSearchResults([]);
+      setShowDropdown(false);
       
       // Clear success message after 10 seconds
       setTimeout(() => setSuccessMessage(null), 10000);
@@ -111,20 +179,94 @@ export const UploadPage: React.FC = () => {
 
       <div className="bg-white rounded-lg shadow-lg p-8">
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Patient Name */}
-          <div>
+          {/* Patient Name with Autocomplete */}
+          <div className="relative">
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Tên bệnh nhân <span className="text-red-500">*</span>
             </label>
-            <input
-              type="text"
-              value={patientName}
-              onChange={(e) => setPatientName(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg"
-              placeholder="Nhập tên đầy đủ của bệnh nhân"
-              required
-              disabled={loading}
-            />
+            <div className="relative">
+              <input
+                type="text"
+                value={patientName}
+                onChange={(e) => handlePatientNameChange(e.target.value)}
+                onFocus={() => searchResults.length > 0 && setShowDropdown(true)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg"
+                placeholder="Nhập tên bệnh nhân (tự động tìm kiếm)"
+                required
+                disabled={loading}
+              />
+              {searchLoading && (
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  <svg className="animate-spin h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                </div>
+              )}
+            </div>
+
+            {/* Dropdown with search results */}
+            {showDropdown && searchResults.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                <div className="p-2 bg-gray-50 border-b border-gray-200 text-xs text-gray-600">
+                  Tìm thấy {searchResults.length} bệnh nhân
+                </div>
+                {searchResults.map((patient) => (
+                  <div
+                    key={patient.patient_id}
+                    onClick={() => handleSelectPatient(patient)}
+                    className="px-4 py-3 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                  >
+                    <div className="font-medium text-gray-900">{patient.patient_name}</div>
+                    <div className="text-sm text-gray-600 flex items-center gap-3 mt-1">
+                      <span>ID: {patient.patient_id}</span>
+                      {patient.patient_age && <span>• {patient.patient_age} tuổi</span>}
+                      {patient.patient_sex && <span>• {patient.patient_sex === 'M' ? 'Nam' : 'Nữ'}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Selected patient info */}
+            {selectedPatient && (
+              <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center text-sm text-green-800">
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>Đã chọn bệnh nhân: <strong>{selectedPatient.patient_name}</strong></span>
+                    {selectedPatient.patient_age && <span className="ml-2">• {selectedPatient.patient_age} tuổi</span>}
+                    {selectedPatient.patient_sex && <span className="ml-1">• {selectedPatient.patient_sex === 'M' ? 'Nam' : 'Nữ'}</span>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPatient(null);
+                      setPatientName('');
+                    }}
+                    className="text-green-600 hover:text-green-800"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* New patient indicator */}
+            {patientName.trim().length >= 2 && !selectedPatient && searchResults.length === 0 && !searchLoading && (
+              <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center text-sm text-blue-800">
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                  </svg>
+                  <span>Bệnh nhân mới: <strong>{patientName}</strong> sẽ được tạo</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* File Upload */}

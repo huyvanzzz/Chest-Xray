@@ -67,10 +67,39 @@ async def get_stats():
         logging.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Image endpoint - Get X-ray image from HDFS
+# Image endpoint - Get X-ray image from HDFS by path (query parameter)
+@app.get("/api/xray-image/")
+async def get_xray_image_by_path(path: str = Query(..., description="HDFS path của ảnh")):
+    """Lấy ảnh X-quang từ HDFS theo đường dẫn"""
+    try:
+        logging.info(f"Getting image from HDFS path: {path}")
+        
+        # Đọc ảnh từ HDFS
+        image_data = hdfs_client.read_file(path)
+        
+        if not image_data:
+            raise HTTPException(status_code=404, detail="Cannot read image from HDFS")
+        
+        # Extract filename from path
+        filename = path.split('/')[-1] if '/' in path else 'image.png'
+        
+        # Trả về ảnh
+        return StreamingResponse(
+            io.BytesIO(image_data),
+            media_type="image/png",
+            headers={"Content-Disposition": f"inline; filename={filename}"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error getting image from {path}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Image endpoint - Get X-ray image from HDFS by image name (path parameter)
 @app.get("/api/xray-image/{image_name}")
-async def get_xray_image(image_name: str):
-    """Lấy ảnh X-quang từ HDFS"""
+async def get_xray_image_by_name(image_name: str):
+    """Lấy ảnh X-quang từ HDFS theo tên file (tìm trong MongoDB)"""
     try:
         # Tìm prediction có image_name này để lấy hdfs_path
         prediction = mongo_client.collection.find_one({"Image Index": image_name})

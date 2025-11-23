@@ -7,6 +7,9 @@ interface Prediction {
   'Patient Name'?: string;
   'Patient Age'?: number;
   'Patient Sex'?: string;
+  'Follow-up #'?: number | string;
+  hdfs_path?: string;
+  predicted_label?: string | any;
   _parsed_severity: number;
   _parsed_disease: string;
   _parsed_probability: number;
@@ -33,6 +36,9 @@ const PatientDetailModal: React.FC<PatientDetailModalProps> = ({
   showExaminedButton = true,
 }) => {
   if (!isOpen || !prediction) return null;
+
+  // Debug: Log prediction data
+  console.log('PatientDetailModal - Prediction data:', prediction);
 
   const severityColors = {
     0: { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
@@ -89,18 +95,24 @@ const PatientDetailModal: React.FC<PatientDetailModalProps> = ({
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-gray-800">Ảnh X-quang</h3>
               <div className="bg-gray-100 rounded-lg overflow-hidden">
-                <img
-                  src={`/api/xray-image/${prediction['Image Index']}`}
-                  alt={`X-ray ${prediction['Image Index']}`}
-                  className="w-full h-auto"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="400"%3E%3Crect fill="%23ddd" width="400" height="400"/%3E%3Ctext fill="%23999" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3EẢnh không khả dụng%3C/text%3E%3C/svg%3E';
-                  }}
-                />
+                {prediction.hdfs_path ? (
+                  <img
+                    src={`/api/xray-image/?path=${encodeURIComponent(prediction.hdfs_path)}`}
+                    alt={`X-ray ${prediction['Image Index']}`}
+                    className="w-full h-auto"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="400" height="400"%3E%3Crect fill="%23ddd" width="400" height="400"/%3E%3Ctext fill="%23999" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3EẢnh không khả dụng%3C/text%3E%3C/svg%3E';
+                    }}
+                  />
+                ) : (
+                  <div className="w-full h-64 flex items-center justify-center bg-gray-200 text-gray-500">
+                    Không có đường dẫn ảnh
+                  </div>
+                )}
               </div>
               <div className="text-sm text-gray-600">
                 <p><strong>File:</strong> {prediction['Image Index']}</p>
-                <p><strong>Follow-up:</strong> #{(prediction as any)['Follow-up #'] || '0'}</p>
+                <p><strong>Follow-up:</strong> #{prediction['Follow-up #'] || '0'}</p>
               </div>
             </div>
 
@@ -110,20 +122,30 @@ const PatientDetailModal: React.FC<PatientDetailModalProps> = ({
               <div className="bg-gray-50 rounded-lg p-4 space-y-3">
                 <div className="flex justify-between">
                   <span className="text-gray-600">ID:</span>
-                  <span className="font-medium">{prediction['Patient ID']}</span>
+                  <span className="font-medium">{prediction['Patient ID'] || 'N/A'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Tên:</span>
-                  <span className="font-medium">{prediction['Patient Name'] || 'N/A'}</span>
+                  <span className="font-medium">
+                    {prediction['Patient Name'] || prediction['Patient ID'] || 'N/A'}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Tuổi:</span>
-                  <span className="font-medium">{prediction['Patient Age'] || 'N/A'}</span>
+                  <span className="font-medium">
+                    {prediction['Patient Age'] !== null && prediction['Patient Age'] !== undefined 
+                      ? `${prediction['Patient Age']} tuổi` 
+                      : 'N/A'}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Giới tính:</span>
                   <span className="font-medium">
-                    {prediction['Patient Sex'] === 'M' ? 'Nam' : prediction['Patient Sex'] === 'F' ? 'Nữ' : 'N/A'}
+                    {prediction['Patient Sex'] === 'M' 
+                      ? 'Nam' 
+                      : prediction['Patient Sex'] === 'F' 
+                        ? 'Nữ' 
+                        : 'N/A'}
                   </span>
                 </div>
                 <div className="flex justify-between">
