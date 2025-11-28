@@ -142,6 +142,39 @@ export const PatientsPage: React.FC = () => {
     }
   };
 
+  const [showEditModal, setShowEditModal] = useState(false);
+  const handleEditPatient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPatient) return;
+
+    try {
+      const response = await fetch(`/api/patients/edit-patient-info/${selectedPatient.patient_id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patient_name: selectedPatient.patient_name,
+          patient_age: selectedPatient.patient_age,
+          patient_sex: selectedPatient.patient_sex,
+          phone: selectedPatient.phone,
+          address: selectedPatient.address,
+          notes: selectedPatient.notes
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Không thể cập nhật bệnh nhân');
+      }
+
+      alert('Cập nhật thông tin bệnh nhân thành công!');
+      setShowEditModal(false);
+      setSelectedPatient(null);
+      fetchPatients();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Đã xảy ra lỗi');
+    }
+  };
+
   const handleViewProfile = async (patient: Patient) => {
     setSelectedPatient(patient);
     setShowProfileModal(true);
@@ -203,6 +236,8 @@ export const PatientsPage: React.FC = () => {
     const colors = ['bg-green-100 text-green-800', 'bg-blue-100 text-blue-800', 'bg-yellow-100 text-yellow-800', 'bg-orange-100 text-orange-800', 'bg-red-100 text-red-800'];
     return colors[severity] || colors[0];
   };
+
+
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -299,12 +334,22 @@ export const PatientsPage: React.FC = () => {
                           <button
                             onClick={() => {
                               setSelectedPatient(patient);
+                              setShowEditModal(true);
+                            }}
+                            className="text-green-600 hover:text-green-900"
+                          >
+                            Sửa
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedPatient(patient);
                               setShowDeleteConfirm(true);
                             }}
                             className="text-red-600 hover:text-red-900"
                           >
                             Xóa
                           </button>
+                          
                         </td>
                       </tr>
                     ))
@@ -531,6 +576,99 @@ export const PatientsPage: React.FC = () => {
               >
                 Đóng
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Patient Modal */}
+        {showEditModal && selectedPatient && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+              <h2 className="text-xl font-bold mb-4">Chỉnh Sửa Thông Tin Bệnh Nhân</h2>
+              <form onSubmit={handleEditPatient} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Tên <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={selectedPatient.patient_name}
+                    onChange={(e) => setSelectedPatient({ ...selectedPatient, patient_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tuổi</label>
+                    <input
+                      type="number"
+                      value={selectedPatient.patient_age || ''}
+                      onChange={(e) => setSelectedPatient({ ...selectedPatient, patient_age: e.target.value ? parseInt(e.target.value) : undefined })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      min="0"
+                      max="150"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Giới tính</label>
+                    <select
+                      value={selectedPatient.patient_sex}
+                      onChange={(e) => setSelectedPatient({ ...selectedPatient, patient_sex: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Chọn</option>
+                      <option value="M">Nam</option>
+                      <option value="F">Nữ</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Số điện thoại</label>
+                  <input
+                    type="tel"
+                    value={selectedPatient.phone || ''}
+                    onChange={(e) => setSelectedPatient({ ...selectedPatient, phone: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Địa chỉ</label>
+                  <input
+                    type="text"
+                    value={selectedPatient.address || ''}
+                    onChange={(e) => setSelectedPatient({ ...selectedPatient, address: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Ghi chú</label>
+                  <textarea
+                    value={selectedPatient.notes || ''}
+                    onChange={(e) => setSelectedPatient({ ...selectedPatient, notes: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    rows={3}
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    type="submit"
+                    className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
+                  >
+                    Lưu
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditModal(false);
+                      setSelectedPatient(null);
+                    }}
+                    className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
+                  >
+                    Hủy
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}

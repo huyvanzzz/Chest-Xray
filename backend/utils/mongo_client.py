@@ -3,7 +3,8 @@ MongoDB Client để query prediction results
 """
 import logging
 import math
-from typing import List, Dict, Optional, Any
+import re
+from typing import List, Dict, Optional, Any, Tuple
 from pymongo import MongoClient
 from datetime import datetime
 from .config import settings
@@ -461,6 +462,53 @@ class MongoDBClient:
         except Exception as e:
             logger.error(f"Lỗi delete patient: {e}")
             return 0
+        
+    
+    def edit_patient(self, patient_id: str, update_fields: Dict) -> Tuple[bool, str]:
+        """
+        Trả về (success, message)
+        """
+        try:
+            if not update_fields:
+                return False, "Không có trường nào để cập nhật"
+
+            if self.patients_collection is None:
+                self.connect()
+
+            # chuẩn hoá patient_id từ request: trim
+            normalized_id = patient_id.strip()
+            logger.debug(f"edit_patient called with patient_id repr: {repr(patient_id)}, normalized: {repr(normalized_id)}")
+
+            # 1) Thử match chính xác trước
+            result = self.patients_collection.update_one(
+                {"patient_id": normalized_id},
+                {"$set": update_fields}
+            )
+
+            if result.matched_count > 0:
+                logger.info(f"Found patient {normalized_id}, matched={result.matched_count}, modified={result.modified_count}")
+                if result.modified_count > 0:
+                    return True, "Cập nhật thành công"
+                else:
+                    return True, "Đã tìm thấy bệnh nhân nhưng không có thay đổi dữ liệu (giống giá trị cũ)"
+            
+            # 2) Nếu không match, thử regex để bắt whitespace hoặc ký tự vô hình
+            regex_query = {"patient_id": {"$regex": f"^\\s*{re.escape(normalized_id)}\\s*$"}}
+            doc = self.patients_collection.find_one(regex_query)
+            if doc:
+                # update bằng filter regex (lưu ý: regex filter có thể chậm nếu không có index phù hợp)
+                result2 = self.patients_collection.update_one(regex_query, {"$set": update_fields})
+                logger.info(f"Matched by regex for {normalized_id}, modified={result2.modified_count}")
+                if result2.modified_count > 0:
+                    return True, "Cập nhật thành công (match bằng regex)"
+                return True, "Tìm thấy bệnh nhân (match bằng regex) nhưng không có thay đổi"
+
+            # 3) Không tìm thấy
+            return False, f"Không tìm thấy bệnh nhân với ID: {patient_id}"
+
+        except Exception as e:
+            logger.exception("Lỗi khi edit_patient")
+            return False, f"Lỗi server: {e}"
     
     def get_priority_statistics(self, date_filter: Dict = None, sort_order: str = "desc", limit: int = 100) -> Dict:
         """
@@ -663,6 +711,8 @@ class MongoDBClient:
             one_day_ago = datetime.utcnow() - timedelta(days=1)
             recent_oid = ObjectId.from_datetime(one_day_ago)
             
+            severity_by_disease = {}  # New: disease -> {severity_level: count}
+            
             for doc in cursor:
                 total_count += 1
                 
@@ -698,6 +748,12 @@ class MongoDBClient:
                         # Count by disease
                         if disease:
                             disease_counts[disease] = disease_counts.get(disease, 0) + 1
+                            
+                            # Count severity by disease (for stacked bar chart)
+                            if disease not in severity_by_disease:
+                                severity_by_disease[disease] = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+                            if severity_level in severity_by_disease[disease]:
+                                severity_by_disease[disease][severity_level] += 1
                     except Exception as e:
                         logger.warning(f"Cannot parse predicted_label: {e}")
                         pass
@@ -706,7 +762,8 @@ class MongoDBClient:
                 "total_predictions": total_count,
                 "by_severity": severity_counts,
                 "by_disease": disease_counts,
-                "recent_count": recent_count
+                "recent_count": recent_count,
+                "severity_by_disease": severity_by_disease
             }
             
             logger.info(f"Overall statistics: {total_count} total, {recent_count} recent")
@@ -718,7 +775,8 @@ class MongoDBClient:
                 "total_predictions": 0,
                 "by_severity": {0: 0, 1: 0, 2: 0, 3: 0, 4: 0},
                 "by_disease": {},
-                "recent_count": 0
+                "recent_count": 0,
+                "severity_by_disease": {}
             }
     
     def get_predictions_by_severity(self, severity_level: int, limit: int = 50, skip: int = 0) -> Dict:

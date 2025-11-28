@@ -2,7 +2,7 @@
 Router cho quản lý bệnh nhân
 """
 import logging
-from typing import Optional, List
+from typing import Dict, Optional, List
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -232,4 +232,38 @@ async def delete_patient(patient_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Không thể xóa bệnh nhân: {str(e)}"
+        )
+
+@router.post("/patients/edit-patient-info/{patient_id}")
+async def edit_patient_info(patient_id: str, update_fields: Dict):
+    """
+    Chỉnh sửa thông tin bệnh nhân, lưu ý không thêm trường _id vaò update_fields
+    
+    ## Parameters
+    - **patient_id**: ID bệnh nhân cần chỉnh sửa
+    - **update_fields**: Dict các trường cần cập nhật
+    
+    ## Returns
+    - **message**: Thông báo thành công
+    """
+    try:
+        (result, mess ) = mongo_client.edit_patient(patient_id, update_fields)
+        
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=mess
+            )
+        
+        return {
+            "message": mess
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Lỗi edit patient info: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Không thể cập nhật thông tin bệnh nhân: {str(e)}"
         )
