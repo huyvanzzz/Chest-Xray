@@ -216,54 +216,24 @@ async def search_predictions_by_name(
 )
 async def get_statistics():
     """
-    Lấy thống kê tổng quan và phân tích dữ liệu
+    Lấy thống kê tổng quan và phân tích dữ liệu (với demographics)
     
     ## Returns
     - **total_predictions**: Tổng số predictions
     - **by_severity**: Phân bố theo severity level (0-4)
     - **by_disease**: Phân bố theo loại bệnh
+    - **severity_by_disease**: Ma trận severity theo từng bệnh
+    - **by_gender**: Phân bố theo giới tính
+    - **by_age_group**: Phân bố theo nhóm tuổi
+    - **age_disease_correlation**: Tương quan tuổi-bệnh
     - **high_risk_count**: Số ca severity >= 3
+    - **recent_count**: Số ca gần đây
     """
     try:
-        total = mongo_client.count_total()
-        all_predictions = mongo_client.get_predictions(limit=total)
-        
-        # Phân tích theo severity
-        by_severity = {}
-        by_disease = {}
-        
-        for pred in all_predictions:
-            try:
-                import json
-                label_str = pred.get('predicted_label', '[]')
-                # predicted_label is an array of predictions, get the first one
-                label_list = json.loads(label_str)
-                if label_list and len(label_list) > 0:
-                    label_data = label_list[0]
-                    severity = label_data.get('severity_level', 0)
-                    disease = label_data.get('disease', 'Unknown')
-                    
-                    # Count by severity
-                    by_severity[severity] = by_severity.get(severity, 0) + 1
-                    
-                    # Count by disease
-                    by_disease[disease] = by_disease.get(disease, 0) + 1
-            except Exception as e:
-                logger.warning(f"Failed to parse prediction: {e}")
-                continue
-        
-        high_risk = sum(count for level, count in by_severity.items() if level >= 3)
-        
-        return {
-            "total_predictions": total,
-            "by_severity": by_severity,
-            "by_disease": by_disease,
-            "high_risk_count": high_risk,
-            "recent_count": min(total, 100)
-        }
-        
+        stats = mongo_client.get_overall_statistics()
+        return stats
     except Exception as e:
-        logger.error(f"Lỗi query statistics: {e}")
+        logger.error(f"Error getting stats: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Không thể truy vấn statistics: {str(e)}"

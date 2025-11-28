@@ -57,15 +57,7 @@ app.include_router(priority.router, prefix="/api", tags=["Priority"])
 app.include_router(websocket.router, prefix="/api", tags=["WebSocket"])
 
 # Stats endpoint for Dashboard
-@app.get("/api/stats")
-async def get_stats():
-    """Lấy thống kê tổng quan cho Dashboard"""
-    try:
-        stats = mongo_client.get_overall_statistics()
-        return stats
-    except Exception as e:
-        logging.error(f"Error getting stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Đã di chuyển endpoint /api/stats vào routers/predictions.py
 
 # Image endpoint - Get X-ray image from HDFS by path (query parameter)
 @app.get("/api/xray-image/")

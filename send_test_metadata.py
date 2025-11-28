@@ -38,8 +38,8 @@ else:
 # ---------- Local data ----------
 LOCAL_IMAGES_DIR = "/app/data/images"
 PATIENT_CSV = "/app/data/patient_subset.csv"
-BATCH_SIZE = 5
-INTERVAL_SEC = 5
+BATCH_SIZE = 1
+INTERVAL_SEC = 0.5
 
 # ---------- Load CSV ----------
 print("[DEBUG] Đang load CSV...")

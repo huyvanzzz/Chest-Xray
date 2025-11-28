@@ -8,6 +8,9 @@ interface Stats {
   recent_count: number;
   severity_by_disease?: { [disease: string]: { [severity: string]: number } };
   hourly_trends?: Array<{ hour: string; count: number; avg_severity: number }>;
+  by_gender?: { [gender: string]: number };
+  by_age_group?: { [ageGroup: string]: number };
+  age_disease_correlation?: { [disease: string]: { [ageGroup: string]: number } };
 }
 
 const COLORS = ['#10b981', '#84cc16', '#eab308', '#f97316', '#ef4444'];
@@ -160,6 +163,47 @@ export const Dashboard: React.FC = () => {
       'Nghiêm trọng': severityDist['3'] || 0,
       'Rất nghiêm trọng': severityDist['4'] || 0,
     };
+  });
+
+  // Prepare gender distribution data
+  const genderData = Object.entries(stats.by_gender || {})
+    .filter(([gender]) => gender && gender !== 'Unknown')
+    .map(([gender, count]) => ({
+      name: gender === 'M' ? 'Nam' : gender === 'F' ? 'Nữ' : gender,
+      value: count
+    }));
+
+  // Prepare age group data
+  const ageGroupData = Object.entries(stats.by_age_group || {})
+    .filter(([group]) => group !== 'Unknown')
+    .map(([group, count]) => ({ name: group, value: count }))
+    .sort((a, b) => {
+      const order = ['0-20', '21-40', '41-60', '61-80', '80+'];
+      return order.indexOf(a.name) - order.indexOf(b.name);
+    });
+
+  // Prepare age-disease correlation data for heatmap
+  const top5DiseasesForAge = Object.entries(stats.by_disease || {})
+    .filter(([disease]) => disease !== "No Finding")
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([disease]) => disease);
+    
+  // Create heatmap data structure
+  const heatmapData: { ageGroup: string; disease: string; fullDisease: string; value: number; x: number; y: number }[] = [];
+  ['0-20', '21-40', '41-60', '61-80', '80+'].forEach((ageGroup, ageIndex) => {
+    top5DiseasesForAge.forEach((disease, diseaseIndex) => {
+      const diseaseData = stats.age_disease_correlation?.[disease] || {};
+      const value = diseaseData[ageGroup] || 0;
+      heatmapData.push({
+        ageGroup,
+        disease: disease.length > 12 ? disease.substring(0, 12) + '...' : disease,
+        fullDisease: disease,
+        value,
+        x: ageIndex,
+        y: diseaseIndex
+      });
+    });
   });
 
 
@@ -316,6 +360,142 @@ export const Dashboard: React.FC = () => {
           </ResponsiveContainer>
           <div className="mt-4 text-sm text-gray-600 text-center">
             Biểu đồ xếp chồng cho thấy phân bố mức độ của từng bệnh
+          </div>
+        </div>
+      </div>
+
+      {/* Demographics Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-8">
+        {/* Gender Distribution */}
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Phân bố theo giới tính</h2>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={genderData}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={({ name, percent }) => `${name}: ${((percent || 0) * 100).toFixed(1)}%`}
+                outerRadius={80}
+                fill="#8884d8"
+                dataKey="value"
+              >
+                {genderData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={index === 0 ? '#3b82f6' : '#ec4899'} />
+                ))}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="mt-4 text-sm text-gray-600 text-center">
+            Tỷ lệ nam/nữ trong dữ liệu bệnh nhân
+          </div>
+        </div>
+
+        {/* Age Distribution */}
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Phân bố theo độ tuổi</h2>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={ageGroupData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="value" fill="#10b981" />
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="mt-4 text-sm text-gray-600 text-center">
+            Phân bố bệnh nhân theo nhóm tuổi
+          </div>
+        </div>
+
+        {/* Age-Disease Correlation */}
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Tương quan tuổi - bệnh</h2>
+          <div className="heatmap-container" style={{ 
+            width: '100%', 
+            height: '400px',
+            display: 'grid',
+            gridTemplateColumns: `100px repeat(5, 1fr)`,
+            gridTemplateRows: `40px repeat(${top5DiseasesForAge.length}, 1fr)`,
+            gap: '2px',
+            padding: '10px'
+          }}>
+            {/* Header row - Age groups */}
+            <div></div>
+            {['0-20', '21-40', '41-60', '61-80', '80+'].map(age => (
+              <div key={age} style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '14px',
+                fontWeight: 'bold',
+                color: '#4A5568',
+                backgroundColor: '#F7FAFC',
+                borderRadius: '6px'
+              }}>
+                {age}
+              </div>
+            ))}
+            
+            {/* Data rows */}
+            {top5DiseasesForAge.map((disease, diseaseIndex) => (
+              <>
+                {/* Disease label */}
+                <div key={`label-${disease}`} style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  color: '#4A5568',
+                  paddingRight: '8px',
+                  textAlign: 'right',
+                  backgroundColor: '#F7FAFC',
+                  borderRadius: '6px',
+                  justifyContent: 'center'
+                }}>
+                  {disease.length > 12 ? disease.substring(0, 12) + '...' : disease}
+                </div>
+                
+                {/* Data cells */}
+                {['0-20', '21-40', '41-60', '61-80', '80+'].map((ageGroup, ageIndex) => {
+                  const diseaseData = stats.age_disease_correlation?.[disease] || {};
+                  const value = diseaseData[ageGroup] || 0;
+                  const maxValue = Math.max(...heatmapData.map(d => d.value));
+                  const intensity = maxValue > 0 ? value / maxValue : 0;
+                  
+                  return (
+                    <div key={`${disease}-${ageGroup}`} style={{
+                      backgroundColor: `rgba(59, 130, 246, ${intensity * 0.8 + 0.1})`,
+                      border: '2px solid #E2E8F0',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '13px',
+                      fontWeight: 'bold',
+                      color: intensity > 0.5 ? 'white' : '#1A202C',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}
+                    title={`${disease} (${ageGroup}): ${value} ca`}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'scale(1.05)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'scale(1)';
+                    }}
+                    >
+                      {value}
+                    </div>
+                  );
+                })}
+              </>
+            ))}
+          </div>
+          <div className="mt-4 text-sm text-gray-600 text-center">
+            Biểu đồ tương quan tuổi - bệnh (Top 5 bệnh)
           </div>
         </div>
       </div>

@@ -712,6 +712,11 @@ class MongoDBClient:
             recent_oid = ObjectId.from_datetime(one_day_ago)
             
             severity_by_disease = {}  # New: disease -> {severity_level: count}
+            gender_counts = {}  # New: gender distribution
+            age_groups = {
+                "0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "80+": 0, "Unknown": 0
+            }  # New: age group distribution
+            age_disease_data = {}  # New: {disease: {age_group: count}}
             
             for doc in cursor:
                 total_count += 1
@@ -719,6 +724,34 @@ class MongoDBClient:
                 # Count recent (last 24h)
                 if isinstance(doc['_id'], ObjectId) and doc['_id'] > recent_oid:
                     recent_count += 1
+                
+                # Get patient demographics
+                patient_age = doc.get('Patient Age')
+                patient_sex = doc.get('Patient Sex')
+                
+                # Count by gender
+                if patient_sex:
+                    gender_counts[patient_sex] = gender_counts.get(patient_sex, 0) + 1
+                
+                # Count by age group
+                age_group = "Unknown"
+                if patient_age and isinstance(patient_age, (int, float)):
+                    # Check for NaN values
+                    import math
+                    if not math.isnan(patient_age):
+                        age = int(patient_age)
+                        if age <= 20:
+                            age_group = "0-20"
+                        elif age <= 40:
+                            age_group = "21-40"
+                        elif age <= 60:
+                            age_group = "41-60"
+                        elif age <= 80:
+                            age_group = "61-80"
+                        else:
+                            age_group = "80+"
+                
+                age_groups[age_group] += 1
                 
                 # Parse predicted_label
                 if 'predicted_label' in doc and doc['predicted_label']:
@@ -754,6 +787,14 @@ class MongoDBClient:
                                 severity_by_disease[disease] = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
                             if severity_level in severity_by_disease[disease]:
                                 severity_by_disease[disease][severity_level] += 1
+                            
+                            # Count age-disease correlation
+                            if disease not in age_disease_data:
+                                age_disease_data[disease] = {
+                                    "0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "80+": 0, "Unknown": 0
+                                }
+                            age_disease_data[disease][age_group] += 1
+                            
                     except Exception as e:
                         logger.warning(f"Cannot parse predicted_label: {e}")
                         pass
@@ -763,7 +804,10 @@ class MongoDBClient:
                 "by_severity": severity_counts,
                 "by_disease": disease_counts,
                 "recent_count": recent_count,
-                "severity_by_disease": severity_by_disease
+                "severity_by_disease": severity_by_disease,
+                "by_gender": gender_counts,
+                "by_age_group": age_groups,
+                "age_disease_correlation": age_disease_data
             }
             
             logger.info(f"Overall statistics: {total_count} total, {recent_count} recent")
@@ -776,7 +820,10 @@ class MongoDBClient:
                 "by_severity": {0: 0, 1: 0, 2: 0, 3: 0, 4: 0},
                 "by_disease": {},
                 "recent_count": 0,
-                "severity_by_disease": {}
+                "severity_by_disease": {},
+                "by_gender": {},
+                "by_age_group": {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "80+": 0, "Unknown": 0},
+                "age_disease_correlation": {}
             }
     
     def get_predictions_by_severity(self, severity_level: int, limit: int = 50, skip: int = 0) -> Dict:
