@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
 
 interface Stats {
   total_predictions: number;
   by_severity: { [key: string]: number };
   by_disease: { [key: string]: number };
   recent_count: number;
+  severity_by_disease?: { [disease: string]: { [severity: string]: number } };
+  hourly_trends?: Array<{ hour: string; count: number; avg_severity: number }>;
 }
 
 const COLORS = ['#10b981', '#84cc16', '#eab308', '#f97316', '#ef4444'];
@@ -128,9 +130,38 @@ export const Dashboard: React.FC = () => {
   }));
 
   const diseaseData = Object.entries(stats.by_disease || {})
+    .filter(([disease]) => disease !== "No Finding") // ← bỏ No Finding
     .map(([disease, count]) => ({ name: disease, value: count }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 10);
+
+  // Prepare radar chart data for severity analysis
+  const radarData = severityData.map(item => ({
+    severity: item.name,
+    count: item.value,
+    percentage: stats.total_predictions > 0 ? (item.value / stats.total_predictions * 100).toFixed(1) : 0
+  }));
+
+  // Prepare disease-severity matrix for top 6 diseases
+  const top6Diseases = Object.entries(stats.by_disease || {})
+    .filter(([disease]) => disease !== "No Finding")
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([disease]) => disease);
+  
+  const diseaseSeverityData = top6Diseases.map(disease => {
+    const severityDist = stats.severity_by_disease?.[disease] || {};
+    return {
+      disease: disease.length > 15 ? disease.substring(0, 15) + '...' : disease,
+      fullDisease: disease,
+      'Bình thường': severityDist['0'] || 0,
+      'Nhẹ': severityDist['1'] || 0,
+      'Trung bình': severityDist['2'] || 0,
+      'Nghiêm trọng': severityDist['3'] || 0,
+      'Rất nghiêm trọng': severityDist['4'] || 0,
+    };
+  });
+
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -236,6 +267,59 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* New Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+        {/* Severity Area Chart */}
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Phân tích mức độ nghiêm trọng (Tỷ lệ %)</h2>
+          <ResponsiveContainer width="100%" height={350}>
+            <AreaChart data={severityData}>
+              <defs>
+                <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+              <YAxis />
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
+              />
+              <Area type="monotone" dataKey="value" stroke="#3b82f6" fillOpacity={1} fill="url(#colorCount)" />
+            </AreaChart>
+          </ResponsiveContainer>
+          <div className="mt-4 text-sm text-gray-600 text-center">
+            Biểu đồ diện tích hiển thị xu hướng phân bố các mức độ nghiêm trọng
+          </div>
+        </div>
+
+        {/* Disease-Severity Stacked Bar Chart */}
+        <div className="bg-white rounded-lg shadow-lg p-6">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Mức độ nghiêm trọng theo bệnh</h2>
+          <ResponsiveContainer width="100%" height={350}>
+            <BarChart data={diseaseSeverityData} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" />
+              <YAxis dataKey="disease" type="category" width={120} tick={{ fontSize: 11 }} />
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
+                formatter={(value: any, name: string) => [value, name]}
+              />
+              <Legend wrapperStyle={{ fontSize: '12px' }} />
+              <Bar dataKey="Bình thường" stackId="a" fill="#10b981" />
+              <Bar dataKey="Nhẹ" stackId="a" fill="#84cc16" />
+              <Bar dataKey="Trung bình" stackId="a" fill="#eab308" />
+              <Bar dataKey="Nghiêm trọng" stackId="a" fill="#f97316" />
+              <Bar dataKey="Rất nghiêm trọng" stackId="a" fill="#ef4444" />
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="mt-4 text-sm text-gray-600 text-center">
+            Biểu đồ xếp chồng cho thấy phân bố mức độ của từng bệnh
+          </div>
+        </div>
+      </div>
+
       {/* Connection Status & Refresh Button */}
       <div className="mt-8 text-center">
         <div className="mb-4 inline-flex items-center">
@@ -243,17 +327,6 @@ export const Dashboard: React.FC = () => {
           <span className="text-sm text-gray-600">
             {wsConnected ? 'Đang cập nhật tự động' : 'Mất kết nối - Đang thử kết nối lại...'}
           </span>
-        </div>
-        <div>
-          <button
-            onClick={fetchStats}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors inline-flex items-center"
-          >
-            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            Làm mới dữ liệu thủ công
-          </button>
         </div>
       </div>
     </div>

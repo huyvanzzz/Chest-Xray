@@ -46,6 +46,15 @@ const PriorityPage: React.FC = () => {
   const [filteredPredictions, setFilteredPredictions] = useState<Prediction[]>([]);
   const [selectedPrediction, setSelectedPrediction] = useState<Prediction | null>(null);
   const [showModal, setShowModal] = useState(false);
+  
+  // New filter states
+  const [searchName, setSearchName] = useState('');
+  const [selectedDisease, setSelectedDisease] = useState('');
+  const [timeFilter, setTimeFilter] = useState<'all' | '5min' | '30min' | 'custom'>('all');
+  const [customMinutes, setCustomMinutes] = useState('');
+  
+  // Unique diseases list
+  const [diseasesList, setDiseasesList] = useState<string[]>([]);
 
   const severityColors = {
     0: { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
@@ -62,17 +71,26 @@ const PriorityPage: React.FC = () => {
       if (startDate) params.append('start_date', startDate);
       if (endDate) params.append('end_date', endDate);
       params.append('sort_order', sortOrder);
-      params.append('limit', '100');
+      params.append('limit', '500');
 
       const response = await fetch(`/api/priority/statistics?${params}`);
       const data = await response.json();
       setStatistics(data);
       
+      // Extract unique diseases
+      const diseases = new Set<string>();
+      data.predictions.forEach((pred: Prediction) => {
+        if (pred._parsed_disease) {
+          diseases.add(pred._parsed_disease);
+        }
+      });
+      setDiseasesList(Array.from(diseases).sort());
+      
       // Nếu đang có filter severity, load lại data cho severity đó
       if (selectedSeverity !== null) {
         await fetchBySeverity(selectedSeverity);
       } else {
-        setFilteredPredictions(data.predictions);
+        applyFilters(data.predictions);
       }
     } catch (error) {
       console.error('Error fetching statistics:', error);
@@ -83,13 +101,56 @@ const PriorityPage: React.FC = () => {
 
   const fetchBySeverity = async (severityLevel: number) => {
     try {
-      const response = await fetch(`/api/priority/by-severity?severity_level=${severityLevel}&limit=200`);
+      const response = await fetch(`/api/priority/by-severity?severity_level=${severityLevel}&limit=500`);
       const data = await response.json();
-      setFilteredPredictions(data.results || []);
+      applyFilters(data.results || []);
     } catch (error) {
       console.error('Error fetching by severity:', error);
       setFilteredPredictions([]);
     }
+  };
+
+  const applyFilters = (predictions: Prediction[]) => {
+    let filtered = [...predictions];
+    
+    // Filter by name
+    if (searchName.trim()) {
+      const searchLower = searchName.toLowerCase().trim();
+      filtered = filtered.filter(pred => 
+        (pred['Patient Name']?.toLowerCase().includes(searchLower)) ||
+        (pred['Patient ID']?.toLowerCase().includes(searchLower))
+      );
+    }
+    
+    // Filter by disease
+    if (selectedDisease) {
+      filtered = filtered.filter(pred => pred._parsed_disease === selectedDisease);
+    }
+    
+    // Filter by time
+    if (timeFilter !== 'all') {
+      const now = new Date();
+      let minutesAgo = 0;
+      
+      if (timeFilter === '5min') {
+        minutesAgo = 5;
+      } else if (timeFilter === '30min') {
+        minutesAgo = 30;
+      } else if (timeFilter === 'custom' && customMinutes) {
+        minutesAgo = parseInt(customMinutes);
+      }
+      
+      if (minutesAgo > 0) {
+        const cutoffTime = new Date(now.getTime() - minutesAgo * 60 * 1000);
+        filtered = filtered.filter(pred => {
+          if (!pred.timestamp) return false;
+          const predTime = new Date(pred.timestamp);
+          return predTime >= cutoffTime;
+        });
+      }
+    }
+    
+    setFilteredPredictions(filtered);
   };
 
   const handleSeverityClick = async (severityLevel: number) => {
@@ -114,6 +175,17 @@ const PriorityPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDate, endDate, sortOrder]);
 
+  // Apply filters when filter values change
+  useEffect(() => {
+    if (statistics) {
+      const baseData = selectedSeverity !== null 
+        ? filteredPredictions 
+        : statistics.predictions;
+      applyFilters(baseData);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchName, selectedDisease, timeFilter, customMinutes]);
+
   const handleFilter = () => {
     fetchStatistics();
   };
@@ -123,11 +195,52 @@ const PriorityPage: React.FC = () => {
     setEndDate('');
     setSortOrder('desc');
     setSelectedSeverity(null);
+    setSearchName('');
+    setSelectedDisease('');
+    setTimeFilter('all');
+    setCustomMinutes('');
   };
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleString('vi-VN');
+  };
+
+  const formatWaitingTime = (timestamp?: string) => {
+    if (!timestamp) return 'N/A';
+    
+    try {
+      const now = new Date();
+      const predictionTime = new Date(timestamp);
+      const diffMs = now.getTime() - predictionTime.getTime();
+      const hours = diffMs / (1000 * 60 * 60);
+      
+      if (hours < 0) return 'Vừa xong';
+      
+      if (hours < 1) {
+        // Dưới 1 giờ - hiển thị phút
+        const minutes = Math.floor(hours * 60);
+        return `${minutes} phút`;
+      } else if (hours < 24) {
+        // Từ 1 giờ đến dưới 24 giờ - hiển thị giờ và phút
+        const fullHours = Math.floor(hours);
+        const minutes = Math.floor((hours - fullHours) * 60);
+        if (minutes > 0) {
+          return `${fullHours} giờ ${minutes} phút`;
+        }
+        return `${fullHours} giờ`;
+      } else {
+        // Từ 24 giờ trở lên - hiển thị ngày và giờ
+        const days = Math.floor(hours / 24);
+        const remainingHours = Math.floor(hours % 24);
+        if (remainingHours > 0) {
+          return `${days} ngày ${remainingHours} giờ`;
+        }
+        return `${days} ngày`;
+      }
+    } catch (error) {
+      return 'N/A';
+    }
   };
 
   const formatProbability = (prob: number) => {
@@ -209,7 +322,8 @@ const PriorityPage: React.FC = () => {
           <h2 className="text-lg font-semibold text-gray-800">Bộ lọc</h2>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* Date and Sort filters */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Từ ngày
@@ -263,6 +377,70 @@ const PriorityPage: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Additional filters */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pt-4 border-t border-gray-200">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Tìm theo tên/ID
+            </label>
+            <input
+              type="text"
+              value={searchName}
+              onChange={(e) => setSearchName(e.target.value)}
+              placeholder="Nhập tên hoặc ID bệnh nhân"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Lọc theo bệnh
+            </label>
+            <select
+              value={selectedDisease}
+              onChange={(e) => setSelectedDisease(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="">-- Tất cả bệnh --</option>
+              {diseasesList.map(disease => (
+                <option key={disease} value={disease}>{disease}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Lọc theo thời gian
+            </label>
+            <select
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value as any)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="all">Tất cả</option>
+              <option value="5min">5 phút trước</option>
+              <option value="30min">30 phút trước</option>
+              <option value="custom">Tùy chỉnh</option>
+            </select>
+          </div>
+
+          {timeFilter === 'custom' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Số phút trước
+              </label>
+              <input
+                type="number"
+                value={customMinutes}
+                onChange={(e) => setCustomMinutes(e.target.value)}
+                placeholder="Nhập số phút"
+                min="1"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -295,18 +473,23 @@ const PriorityPage: React.FC = () => {
       </div>
 
       {/* Current Filter Info */}
-      {(startDate || endDate || selectedSeverity !== null) && (
+      {(startDate || endDate || selectedSeverity !== null || searchName || selectedDisease || timeFilter !== 'all') && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-center gap-2 text-sm text-blue-800">
+          <div className="flex items-center gap-2 flex-wrap text-sm text-blue-800">
             <Filter className="w-4 h-4" />
             <span className="font-medium">Đang lọc:</span>
-            {startDate && <span>Từ {startDate}</span>}
-            {endDate && <span>Đến {endDate}</span>}
+            {startDate && <span className="bg-blue-200 px-2 py-1 rounded">Từ {startDate}</span>}
+            {endDate && <span className="bg-blue-200 px-2 py-1 rounded">Đến {endDate}</span>}
             {selectedSeverity !== null && (
               <span className="bg-blue-200 px-2 py-1 rounded">
                 Mức độ: {statistics?.summary.find(s => s.severity_level === selectedSeverity)?.severity_name}
               </span>
             )}
+            {searchName && <span className="bg-blue-200 px-2 py-1 rounded">Tên: {searchName}</span>}
+            {selectedDisease && <span className="bg-blue-200 px-2 py-1 rounded">Bệnh: {selectedDisease}</span>}
+            {timeFilter === '5min' && <span className="bg-blue-200 px-2 py-1 rounded">5 phút trước</span>}
+            {timeFilter === '30min' && <span className="bg-blue-200 px-2 py-1 rounded">30 phút trước</span>}
+            {timeFilter === 'custom' && customMinutes && <span className="bg-blue-200 px-2 py-1 rounded">{customMinutes} phút trước</span>}
           </div>
         </div>
       )}
@@ -431,7 +614,7 @@ const PriorityPage: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
-                        {prediction._hours_waiting ? `${prediction._hours_waiting.toFixed(1)} giờ` : 'N/A'}
+                        {formatWaitingTime(prediction.timestamp)}
                       </div>
                       <div className="text-xs text-gray-500">
                         {formatDate(prediction.timestamp)}
